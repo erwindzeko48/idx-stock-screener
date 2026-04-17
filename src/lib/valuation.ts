@@ -237,17 +237,31 @@ export function calculateGrahamNumber(f: StockFinancials): MethodResult {
  * when FCF is tiny relative to market cap.
  */
 export function calculateDCFModel(f: StockFinancials): MethodResult {
-  const { freeCashFlow, revenueGrowth, marketCap, currentPrice, sector } = f;
+  const { freeCashFlow, netIncome, revenueGrowth, marketCap, currentPrice, sector } = f;
 
-  if (!freeCashFlow || !marketCap || freeCashFlow <= 0 || marketCap <= 0 || currentPrice <= 0) {
+  if (!marketCap || marketCap <= 0 || currentPrice <= 0) {
     return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
   }
 
   const shares = marketCap / currentPrice;
   if (shares <= 0) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
 
-  const fcfPerShare = freeCashFlow / shares;
-  if (fcfPerShare <= 0) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
+  // Determine the cash-flow base: FCF preferred, netIncome as fallback (with quality discount)
+  let cashBase: number | null = null;
+  let qualityDiscount = 1.0;
+
+  if (freeCashFlow !== null && freeCashFlow > 0) {
+    cashBase = freeCashFlow;
+  } else if (netIncome !== null && netIncome > 0) {
+    // Net income excludes capex; apply a 30% haircut for conservatism
+    cashBase = netIncome;
+    qualityDiscount = 0.70;
+  }
+
+  if (cashBase === null) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
+
+  const cashBasePerShare = (cashBase * qualityDiscount) / shares;
+  if (cashBasePerShare <= 0) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
 
   const wacc = getWACC(sector);
   if (wacc <= TERMINAL_GROWTH) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
@@ -256,25 +270,20 @@ export function calculateDCFModel(f: StockFinancials): MethodResult {
   const growthRate = Math.min(Math.max(revenueGrowth ?? 0.05, -0.10), 0.25);
 
   let totalPV = 0;
-  let projectedFCF = fcfPerShare;
+  let projected = cashBasePerShare;
 
   for (let year = 1; year <= PROJECTION_YEARS; year++) {
-    projectedFCF *= 1 + growthRate;
+    projected *= 1 + growthRate;
     const discountFactor = Math.pow(1 + wacc, year);
-    totalPV += projectedFCF / discountFactor;
+    totalPV += projected / discountFactor;
   }
 
-  const terminalFCF = projectedFCF * (1 + TERMINAL_GROWTH);
+  const terminalFCF = projected * (1 + TERMINAL_GROWTH);
   const terminalValue = terminalFCF / (wacc - TERMINAL_GROWTH);
   const pvTerminal = terminalValue / Math.pow(1 + wacc, PROJECTION_YEARS);
 
-  // Raw DCF intrinsic value
-  let value = totalPV + pvTerminal;
-
-  // Sanity cap: intrinsic value should not exceed 10× current price
-  // (avoids absurd outputs when FCF/share is misreported or negligible)
-  const MAX_MULTIPLIER = 10;
-  value = Math.min(value, currentPrice * MAX_MULTIPLIER);
+  // Sanity cap at 10× current price
+  const value = Math.min(totalPV + pvTerminal, currentPrice * 10);
 
   return {
     value,

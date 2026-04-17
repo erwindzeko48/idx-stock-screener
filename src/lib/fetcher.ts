@@ -45,7 +45,7 @@ export async function fetchStockFinancials(
         module: 'all',
         period1: '2021-01-01',
       });
-      // Sort newest to oldest so index 0 = newest, index 1 = previous year
+      // Sort newest to oldest: index 0 = newest, index 1 = previous period
       ts = Array.isArray(datesRes)
         ? datesRes.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
         : [];
@@ -69,122 +69,235 @@ export async function fetchStockFinancials(
       return safeNum(ts[index][key]);
     };
 
-    // Revenue & growth
-    const revenue = safeNum(fd?.totalRevenue) ?? getTS('totalRevenue', 0) ?? getTS('operatingRevenue', 0);
-    const revenueGrowth = safeNum(fd?.revenueGrowth); // YoY from Yahoo
+    // ── Shares outstanding ────────────────────────────────────────────────────
+    const sharesOutstanding =
+      safeNum(ks?.sharesOutstanding) ??
+      safeNum(q?.sharesOutstanding) ??
+      getTS('ordinarySharesNumber', 0) ??
+      getTS('shareIssued', 0);
 
-    // Profitability
-    const netIncome = safeNum(fd?.netIncomeToCommon) ?? getTS('netIncome', 0) ?? getTS('netIncomeCommonStockholders', 0);
-    const prevNetIncome = getTS('netIncome', 1) ?? getTS('netIncomeCommonStockholders', 1);
+    const prevSharesOutstanding =
+      getTS('ordinarySharesNumber', 1) ??
+      getTS('shareIssued', 1);
 
-    const eps = safeNum(ks?.trailingEps) ?? safeNum(q?.epsTrailingTwelveMonths);
-    const epsGrowth = safeNum(fd?.earningsGrowth); // YoY EPS growth from Yahoo
+    // ── Revenue ───────────────────────────────────────────────────────────────
+    const revenue =
+      safeNum(fd?.totalRevenue) ??
+      getTS('totalRevenue', 0) ??
+      getTS('operatingRevenue', 0);
 
-    // Cash flow
-    const operatingCashFlow = safeNum(fd?.operatingCashflow) ?? getTS('operatingCashFlow', 0);
+    const prevRevenue =
+      getTS('totalRevenue', 1) ??
+      getTS('operatingRevenue', 1);
+
+    const revenueGrowth = safeNum(fd?.revenueGrowth);
+
+    // ── Net income ────────────────────────────────────────────────────────────
+    const netIncome =
+      safeNum(fd?.netIncomeToCommon) ??
+      getTS('netIncome', 0) ??
+      getTS('netIncomeCommonStockholders', 0);
+
+    const prevNetIncome =
+      getTS('netIncome', 1) ??
+      getTS('netIncomeCommonStockholders', 1);
+
+    // ── EPS (CRITICAL: many Indonesian stocks lack trailingEps in Yahoo) ──────
+    // Fallback chain: Yahoo EPS → derived from yearly net income / shares → quarterly annualised
+    const eps: number | null = (() => {
+      const fromYahoo = safeNum(ks?.trailingEps) ?? safeNum(q?.epsTrailingTwelveMonths);
+      if (fromYahoo !== null) return fromYahoo;
+
+      // Derive from net income / shares
+      if (netIncome !== null && sharesOutstanding && sharesOutstanding > 0) {
+        return netIncome / sharesOutstanding;
+      }
+      // Derive from time-series net income
+      const tsNetIncome = getTS('netIncome', 0) ?? getTS('netIncomeCommonStockholders', 0);
+      if (tsNetIncome !== null && sharesOutstanding && sharesOutstanding > 0) {
+        return tsNetIncome / sharesOutstanding;
+      }
+      return null;
+    })();
+
+    const epsGrowth = safeNum(fd?.earningsGrowth);
+
+    // ── Cash flow ─────────────────────────────────────────────────────────────
+    const operatingCashFlow =
+      safeNum(fd?.operatingCashflow) ??
+      getTS('operatingCashFlow', 0);
+
     const prevOperatingCashFlow = getTS('operatingCashFlow', 1);
 
     const capex = getTS('capitalExpenditure', 0);
-    const freeCashFlow = safeNum(fd?.freeCashflow) ?? (operatingCashFlow && capex ? operatingCashFlow - Math.abs(capex) : operatingCashFlow);
 
-    // Balance sheet
-    const totalDebt = safeNum(fd?.totalDebt) ?? getTS('totalDebt', 0);
-    const prevLongTermDebt = getTS('longTermDebt', 1) ?? getTS('totalDebt', 1);
+    // FCF: prefer direct Yahoo value, then calculate from OCF - CapEx
+    // If OCF exists but CapEx is null (e.g., banks), use OCF directly as FCF proxy
+    const freeCashFlow: number | null = (() => {
+      const direct = safeNum(fd?.freeCashflow);
+      if (direct !== null) return direct;
+      if (operatingCashFlow !== null && capex !== null) {
+        return operatingCashFlow - Math.abs(capex);
+      }
+      // For banks/financials: CapEx is negligible, OCF ≈ FCF
+      if (operatingCashFlow !== null) return operatingCashFlow;
+      return null;
+    })();
 
-    // Shares
-    const sharesOutstanding = safeNum(ks?.sharesOutstanding) ?? safeNum(q?.sharesOutstanding) ?? getTS('ordinarySharesNumber', 0);
-    const prevSharesOutstanding = getTS('ordinarySharesNumber', 1) ?? getTS('shareIssued', 1);
-
-    const bookValuePerShare = safeNum(ks?.bookValue);
-    const totalEquity = bookValuePerShare && sharesOutstanding ? bookValuePerShare * sharesOutstanding : getTS('stockholdersEquity', 0);
-
-    // Piotroski required fields
+    // ── Balance sheet ─────────────────────────────────────────────────────────
     const totalAssets = getTS('totalAssets', 0);
     const prevTotalAssets = getTS('totalAssets', 1);
+    const totalDebt =
+      safeNum(fd?.totalDebt) ??
+      getTS('totalDebt', 0) ??
+      getTS('longTermDebt', 0);
+    const prevLongTermDebt =
+      getTS('longTermDebt', 1) ??
+      getTS('totalDebt', 1);
 
-    const roa = safeNum(fd?.returnOnAssets) ?? (netIncome && totalAssets && totalAssets > 0 ? netIncome / totalAssets : null);
-    const prevRoa = prevNetIncome && prevTotalAssets && prevTotalAssets > 0 ? prevNetIncome / prevTotalAssets : null;
+    // Book Value Per Share: Yahoo bookValue → derived from stockholders' equity / shares
+    const bookValuePerShare: number | null = (() => {
+      const fromYahoo = safeNum(ks?.bookValue);
+      if (fromYahoo !== null && fromYahoo > 0) return fromYahoo;
+      const equity =
+        getTS('stockholdersEquity', 0) ??
+        getTS('totalEquityGrossMinorityInterest', 0) ??
+        getTS('commonStockEquity', 0);
+      if (equity !== null && sharesOutstanding && sharesOutstanding > 0) {
+        return equity / sharesOutstanding;
+      }
+      return null;
+    })();
 
+    const totalEquity: number | null =
+      (bookValuePerShare && sharesOutstanding ? bookValuePerShare * sharesOutstanding : null) ??
+      getTS('stockholdersEquity', 0) ??
+      getTS('totalEquityGrossMinorityInterest', 0) ??
+      getTS('commonStockEquity', 0);
+
+    // ── ROA / ROE / Ratios ────────────────────────────────────────────────────
+    const roa =
+      safeNum(fd?.returnOnAssets) ??
+      (netIncome && totalAssets && totalAssets > 0 ? netIncome / totalAssets : null);
+
+    const prevRoa =
+      prevNetIncome && prevTotalAssets && prevTotalAssets > 0
+        ? prevNetIncome / prevTotalAssets
+        : null;
+
+    const roe = safeNum(fd?.returnOnEquity);
+
+    const pe = safeNum(q?.trailingPE) ?? safeNum(sd?.trailingPE);
+    const pb = safeNum(ks?.priceToBook) ?? safeNum(q?.priceToBook);
+
+    // ── Current ratio ─────────────────────────────────────────────────────────
     const currentAssets = getTS('currentAssets', 0);
     const currentLiabilities = getTS('currentLiabilities', 0);
-    const currentRatio = currentAssets && currentLiabilities && currentLiabilities !== 0
-      ? currentAssets / currentLiabilities
-      : safeNum(fd?.currentRatio);
+    const currentRatio =
+      (currentAssets && currentLiabilities && currentLiabilities > 0
+        ? currentAssets / currentLiabilities
+        : null) ??
+      safeNum(fd?.currentRatio);
 
     const prevCurrentAssets = getTS('currentAssets', 1);
     const prevCurrentLiabilities = getTS('currentLiabilities', 1);
-    const prevCurrentRatio = prevCurrentAssets && prevCurrentLiabilities && prevCurrentLiabilities !== 0
-      ? prevCurrentAssets / prevCurrentLiabilities
-      : null;
+    const prevCurrentRatio =
+      prevCurrentAssets && prevCurrentLiabilities && prevCurrentLiabilities > 0
+        ? prevCurrentAssets / prevCurrentLiabilities
+        : null;
 
+    // ── Gross margin & asset turnover ─────────────────────────────────────────
     const grossProfit = getTS('grossProfit', 0);
     const prevGrossProfit = getTS('grossProfit', 1);
-    const grossMargin = safeNum(fd?.grossMargins) ?? (grossProfit && revenue && revenue > 0 ? grossProfit / revenue : null);
-    const prevRevenue = getTS('totalRevenue', 1) ?? getTS('operatingRevenue', 1);
-    const prevGrossMargin = prevGrossProfit && prevRevenue && prevRevenue > 0 ? prevGrossProfit / prevRevenue : null;
 
-    const assetTurnover = revenue && totalAssets && totalAssets > 0 ? revenue / totalAssets : null;
-    const prevAssetTurnover = prevRevenue && prevTotalAssets && prevTotalAssets > 0 ? prevRevenue / prevTotalAssets : null;
+    const grossMargin =
+      safeNum(fd?.grossMargins) ??
+      (grossProfit && revenue && revenue > 0 ? grossProfit / revenue : null);
 
-    // Ratios
-    const pe = safeNum(q?.trailingPE) ?? safeNum(sd?.trailingPE);
-    const pb = safeNum(ks?.priceToBook) ?? safeNum(q?.priceToBook);
-    const roe = safeNum(fd?.returnOnEquity);
+    const prevGrossMargin =
+      prevGrossProfit && prevRevenue && prevRevenue > 0
+        ? prevGrossProfit / prevRevenue
+        : null;
 
-    // ---- Historical Trailing PE (calculated from time series, NOT forwardPE) ----
-    // Formula: market cap at each period / net income at each period, average across years
-    // Fallback: sector average
-    const historicalTrailingPE = (() => {
+    const assetTurnover =
+      revenue && totalAssets && totalAssets > 0 ? revenue / totalAssets : null;
+
+    const prevAssetTurnover =
+      prevRevenue && prevTotalAssets && prevTotalAssets > 0
+        ? prevRevenue / prevTotalAssets
+        : null;
+
+    // ── Historical trailing PE (computed from time-series, not forwardPE) ────
+    const historicalTrailingPE: number | null = (() => {
       const peReadings: number[] = [];
-      // We have up to 5 entries in ts; compute PE for each period from market cap & net income
+
       for (let i = 0; i < Math.min(ts.length, 5); i++) {
-        const tsNetIncome = safeNum(ts[i]?.netIncome) ?? safeNum(ts[i]?.netIncomeCommonStockholders);
-        const tsMktCap = safeNum(ts[i]?.marketCap); // may not exist in fundamentalsTimeSeries
-        if (tsNetIncome && tsNetIncome > 0 && sharesOutstanding && sharesOutstanding > 0) {
-          // Estimate historical EPS from time-series net income
+        const tsNetIncome =
+          safeNum(ts[i]?.netIncome) ?? safeNum(ts[i]?.netIncomeCommonStockholders);
+        if (tsNetIncome && tsNetIncome > 0 && sharesOutstanding && sharesOutstanding > 0 && eps && eps > 0 && pe && pe > 0) {
           const tsEPS = tsNetIncome / sharesOutstanding;
-          // Estimate historical price from time-series (approx: we don't have daily price here,
-          // but we can calculate implied PE from current PE weight or skip if no price data)
-          // Best available: use current PE as a "starting point" and only if we have multiple data points
-          // For robustness, compute from the netIncome trajectory relative to current EPS
-          if (eps && eps > 0 && pe && pe > 0) {
-            // Implied PE = currentPE * (currentEPS / historicalEPS)
-            const impliedHistoricalPE = pe * (eps / tsEPS);
-            // Only accept reasonable PE values
-            if (impliedHistoricalPE > 0 && impliedHistoricalPE < 100) {
-              peReadings.push(impliedHistoricalPE);
-            }
-          }
-        }
-        // If tsMktCap is available (rare in fundamentalTS but try anyway)
-        if (tsNetIncome && tsNetIncome > 0 && tsMktCap && tsMktCap > 0) {
-          const tsTrailingPE = tsMktCap / tsNetIncome;
-          if (tsTrailingPE > 0 && tsTrailingPE < 100) {
-            peReadings.push(tsTrailingPE);
-          }
+          const implied = pe * (eps / tsEPS);
+          if (implied > 0 && implied < 100) peReadings.push(implied);
         }
       }
 
       if (peReadings.length >= 2) {
-        // Average, then bound to reasonable range
         const avg = peReadings.reduce((a, b) => a + b, 0) / peReadings.length;
         return Math.min(Math.max(avg, 4), 80);
       }
-
-      // Fallback: use trailing PE itself if available
       if (pe && pe > 0 && pe < 80) return pe;
       return null;
     })();
 
-    // Dividend
-    const dividendYield = safeNum(q?.dividendYield) ?? safeNum(sd?.dividendYield);
-    const historicalDividendYield = safeNum(sd?.fiveYearAvgDividendYield);
+    // ── Dividend data ─────────────────────────────────────────────────────────
+    const dividendYield =
+      safeNum(q?.dividendYield) ??
+      safeNum(sd?.dividendYield);
+
+    // historicalDividendYield: Yahoo fiveYearAvgDividendYield often null for IDX stocks.
+    // Fallback: compute average yield from time-series dividendsPerShare / price across periods.
+    const historicalDividendYield: number | null = (() => {
+      const fromYahoo = safeNum(sd?.fiveYearAvgDividendYield);
+      // Yahoo returns this as a percentage (e.g., 3.5 means 3.5%), normalise to decimal
+      if (fromYahoo !== null && fromYahoo > 0) return fromYahoo / 100;
+
+      // Compute from time-series: dividendsPerShare / estimated price at that period
+      const yields: number[] = [];
+      for (let i = 0; i < Math.min(ts.length, 5); i++) {
+        const dps =
+          safeNum(ts[i]?.commonStockDividendPaid) ??
+          safeNum(ts[i]?.dividendsPayable);
+
+        if (dps !== null && sharesOutstanding && sharesOutstanding > 0 && currentPrice > 0) {
+          // dps here is total dividends paid (negative cash-flow field), convert to per-share
+          const dpsPerShare = Math.abs(dps) / sharesOutstanding;
+          // Approximate price at that period (rough: scale current price by earnings ratio)
+          const tsNI = safeNum(ts[i]?.netIncome) ?? safeNum(ts[i]?.netIncomeCommonStockholders);
+          const approxPrice = (tsNI && netIncome && netIncome !== 0)
+            ? currentPrice * (tsNI / netIncome)
+            : currentPrice;
+          if (approxPrice > 0) {
+            const y = dpsPerShare / approxPrice;
+            if (y > 0 && y < 0.30) yields.push(y); // cap at 30% to filter outliers
+          }
+        }
+      }
+
+      if (yields.length >= 2) {
+        return yields.reduce((a, b) => a + b, 0) / yields.length;
+      }
+      // Final fallback: if current yield exists, use it as proxy for historical average
+      if (dividendYield && dividendYield > 0) return dividendYield;
+      return null;
+    })();
+
     const payoutRatio = safeNum(sd?.payoutRatio);
 
-    const debtToEquity: number | null = (() => {
-      if (!totalDebt || !totalEquity || totalEquity === 0) return null;
-      return (totalDebt / totalEquity) * 100;
-    })();
+    // ── Derived ratios ────────────────────────────────────────────────────────
+    const debtToEquity: number | null =
+      totalDebt && totalEquity && totalEquity > 0
+        ? (totalDebt / totalEquity) * 100
+        : null;
 
     const marketCap = safeNum(q?.marketCap) ?? safeNum(sd?.marketCap) ?? 0;
     const enterpriseValue = safeNum(ks?.enterpriseValue);
