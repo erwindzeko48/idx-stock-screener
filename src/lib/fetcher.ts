@@ -250,16 +250,23 @@ export async function fetchStockFinancials(
     })();
 
     // ── Dividend data ─────────────────────────────────────────────────────────
-    const dividendYield =
-      safeNum(q?.dividendYield) ??
-      safeNum(sd?.dividendYield);
+    // IMPORTANT: Yahoo sources differ in format:
+    //   q.dividendYield          → PERCENTAGE (e.g. 5.15 means 5.15%)  ← must ÷100
+    //   sd.dividendYield         → DECIMAL    (e.g. 0.0515 means 5.15%) ← use as-is
+    //   sd.fiveYearAvgDividendYield → PERCENTAGE (e.g. 2.48 means 2.48%) ← must ÷100
+    // We normalise everything to DECIMAL for internal storage.
+    const dividendYield: number | null = (() => {
+      const fromQuote = safeNum(q?.dividendYield);
+      if (fromQuote !== null && fromQuote > 0) return fromQuote / 100; // pct → decimal
+      const fromSD = safeNum(sd?.dividendYield);
+      if (fromSD !== null && fromSD > 0) return fromSD; // already decimal
+      return null;
+    })();
 
-    // historicalDividendYield: Yahoo fiveYearAvgDividendYield often null for IDX stocks.
-    // Fallback: compute average yield from time-series dividendsPerShare / price across periods.
+    // historicalDividendYield: fiveYearAvgDividendYield is in PERCENTAGE form
     const historicalDividendYield: number | null = (() => {
       const fromYahoo = safeNum(sd?.fiveYearAvgDividendYield);
-      // Yahoo returns this as a percentage (e.g., 3.5 means 3.5%), normalise to decimal
-      if (fromYahoo !== null && fromYahoo > 0) return fromYahoo / 100;
+      if (fromYahoo !== null && fromYahoo > 0) return fromYahoo / 100; // pct → decimal
 
       // Compute from time-series: dividendsPerShare / estimated price at that period
       const yields: number[] = [];
