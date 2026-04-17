@@ -19,42 +19,55 @@ function safeNum(val: any): number | null {
   return isFinite(n) && !isNaN(n) ? n : null;
 }
 
-export const revalidate = 7200;
+export const dynamic = 'force-dynamic';
 
 export async function GET(
-  _req: NextRequest,
+  req: NextRequest,
   { params }: { params: Promise<{ symbol: string }> }
 ) {
   const { symbol } = await params;
   const decodedSymbol = decodeURIComponent(symbol);
 
+  // Allow caller to pass ?date=YYYY-MM-DD, default to 1 year ago
+  const { searchParams } = new URL(req.url);
+  const dateParam = searchParams.get('date');
+
   try {
     const now = new Date();
-    const oneYearAgo = new Date(now);
-    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+    let targetDate: Date;
+    if (dateParam && /^\d{4}-\d{2}-\d{2}$/.test(dateParam)) {
+      targetDate = new Date(dateParam + 'T00:00:00Z');
+    } else {
+      targetDate = new Date(now);
+      targetDate.setFullYear(targetDate.getFullYear() - 1);
+    }
 
-    // ── 1. Price history (2 years to get both "then" and "now") ──────────────
+    // Reject future dates
+    if (targetDate >= now) {
+      return NextResponse.json({ error: 'Tanggal harus di masa lalu' }, { status: 400 });
+    }
+
+    // ── 1. Price history (need enough history to cover targetDate → now) ──────
+    // Fetch from targetDate minus a small buffer to find the nearest trading day
+    const fetchFrom = new Date(targetDate);
+    fetchFrom.setDate(fetchFrom.getDate() - 10); // 10-day buffer for weekends/holidays
+
     const chartResult = await yf.chart(decodedSymbol, {
-      period1: (() => {
-        const d = new Date(now);
-        d.setFullYear(d.getFullYear() - 2);
-        return d.toISOString().slice(0, 10);
-      })(),
+      period1: fetchFrom.toISOString().slice(0, 10),
       interval: '1d',
     });
 
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const allQuotes = (chartResult?.quotes ?? []).filter((q: any) => q.close > 0);
     if (allQuotes.length === 0) {
-      return NextResponse.json({ error: 'No price history available' }, { status: 404 });
+      return NextResponse.json({ error: 'Tidak ada data harga untuk rentang waktu ini' }, { status: 404 });
     }
 
-    // Price today
-    const priceNow =
-      safeNum(allQuotes[allQuotes.length - 1].close) ?? 0;
+    // Price today (last available quote)
+    const priceNow = safeNum(allQuotes[allQuotes.length - 1].close) ?? 0;
 
-    // Find the closest trading day to exactly 1 year ago
-    const targetTs = oneYearAgo.getTime();
+    // Find the closest trading day to targetDate
+    const targetTs = targetDate.getTime();
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const closest = allQuotes.reduce((prev: any, cur: any) => {
       const prevDiff = Math.abs(new Date(prev.date).getTime() - targetTs);
@@ -71,19 +84,24 @@ export async function GET(
     }
 
     // ── 2. Fundamental time series ────────────────────────────────────────────
+    // Go back far enough to cover targetDate
+    const tsPeriod1 = new Date(targetDate);
+    tsPeriod1.setFullYear(tsPeriod1.getFullYear() - 2);
+    const tsPeriod1Str = tsPeriod1.toISOString().slice(0, 10);
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let ts: any[] = [];
     try {
       const tsRes = await yf.fundamentalsTimeSeries(decodedSymbol, {
         module: 'all',
-        period1: '2020-01-01',
+        period1: tsPeriod1Str < '2020-01-01' ? tsPeriod1Str : '2020-01-01',
       });
       ts = Array.isArray(tsRes)
         ? tsRes.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
         : [];
     } catch { /* ignore */ }
 
-    // Find the time-series entry closest to 1 year ago
+    // Find the time-series entry closest to targetDate
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const tsThen: any = ts.reduce((best: any, cur: any) => {
       if (!cur.date) return best;
