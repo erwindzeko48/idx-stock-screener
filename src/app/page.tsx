@@ -4,6 +4,7 @@ import { useState, useEffect, useMemo, useRef } from 'react';
 import { StockTable } from '@/components/StockTable';
 import { StatsCard } from '@/components/StatsCard';
 import { TableSkeleton } from '@/components/LoadingSpinner';
+import { HealthFilterPanel, HealthFilters, DEFAULT_FILTERS } from '@/components/HealthFilterPanel';
 import { StockData } from '@/types/stock';
 import { TrendingUp, BarChart2, CheckSquare, Activity, RefreshCw } from 'lucide-react';
 
@@ -91,6 +92,7 @@ export default function DashboardPage() {
   const [loaded, setLoaded] = useState(0);
   const [targetBatchCount, setTargetBatchCount] = useState(0);
   const [error, setError] = useState(false);
+  const [healthFilters, setHealthFilters] = useState<HealthFilters>(DEFAULT_FILTERS);
   
   const [page, setPage] = useState(1);
   const LIMIT = 50;
@@ -186,7 +188,43 @@ export default function DashboardPage() {
     const nextPage = page + 1;
     setPage(nextPage);
     fetchData(nextPage, true);
-  }
+  };
+
+  // ── Client-side health filter ────────────────────────────────────────────
+  const filteredStocks = useMemo(() => {
+    const f = healthFilters;
+    return stocks.filter(({ financials: fin }) => {
+      if (f.roe.enabled) {
+        if (fin.roe === null) return false;
+        if ((fin.roe * 100) < f.roe.min) return false;
+      }
+      if (f.revGrowth.enabled) {
+        if (fin.revenueGrowth === null) return false;
+        if ((fin.revenueGrowth * 100) < f.revGrowth.min) return false;
+      }
+      if (f.niGrowth.enabled) {
+        if (fin.epsGrowth === null) return false;
+        if ((fin.epsGrowth * 100) < f.niGrowth.min) return false;
+      }
+      if (f.fcfPositive.enabled) {
+        if (!fin.freeCashFlow || fin.freeCashFlow <= 0) return false;
+      }
+      if (f.deRatio.enabled) {
+        // debtToEquity stored as (debt/equity)*100; convert back for comparison
+        if (fin.debtToEquity === null) return false;
+        if ((fin.debtToEquity / 100) > f.deRatio.max) return false;
+      }
+      if (f.divYield.enabled) {
+        if (!fin.historicalDividendYield || fin.historicalDividendYield <= 0) return false;
+        // historicalDividendYield stored as decimal (e.g. 0.035 = 3.5%)
+        if ((fin.historicalDividendYield * 100) < f.divYield.min) return false;
+      }
+      if (f.niPositive.enabled) {
+        if (!fin.netIncome || fin.netIncome <= 0) return false;
+      }
+      return true;
+    });
+  }, [stocks, healthFilters]);
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
@@ -242,8 +280,16 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats — always based on full loaded list, not filtered */}
       <DashboardStats stocks={stocks} />
+
+      {/* Health Filter Panel */}
+      <HealthFilterPanel
+        filters={healthFilters}
+        onChange={setHealthFilters}
+        resultCount={filteredStocks.length}
+        totalCount={stocks.length}
+      />
 
       {/* Content */}
       {loading && page === 1 && stocks.length === 0 ? (
@@ -272,7 +318,7 @@ export default function DashboardPage() {
               Masih memuat... ({loaded} saham diproses)
             </div>
           )}
-          <StockTable stocks={stocks} loadingMore={loading && page > 1} onLoadMore={handleLoadMore} hasMore={hasMore} />
+          <StockTable stocks={filteredStocks} loadingMore={loading && page > 1} onLoadMore={handleLoadMore} hasMore={hasMore} />
         </>
       )}
     </div>
