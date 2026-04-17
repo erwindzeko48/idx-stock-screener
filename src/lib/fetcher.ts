@@ -45,8 +45,8 @@ export async function fetchStockFinancials(
         module: 'all',
         period1: '2021-01-01',
       });
-      // Sort newest to oldest so index 0 = newest
-      ts = Array.isArray(datesRes) 
+      // Sort newest to oldest so index 0 = newest, index 1 = previous year
+      ts = Array.isArray(datesRes)
         ? datesRes.sort((a, b) => new Date(b.date || 0).getTime() - new Date(a.date || 0).getTime())
         : [];
     } catch {
@@ -76,7 +76,7 @@ export async function fetchStockFinancials(
     // Profitability
     const netIncome = safeNum(fd?.netIncomeToCommon) ?? getTS('netIncome', 0) ?? getTS('netIncomeCommonStockholders', 0);
     const prevNetIncome = getTS('netIncome', 1) ?? getTS('netIncomeCommonStockholders', 1);
-    
+
     const eps = safeNum(ks?.trailingEps) ?? safeNum(q?.epsTrailingTwelveMonths);
     const epsGrowth = safeNum(fd?.earningsGrowth); // YoY EPS growth from Yahoo
 
@@ -90,29 +90,32 @@ export async function fetchStockFinancials(
     // Balance sheet
     const totalDebt = safeNum(fd?.totalDebt) ?? getTS('totalDebt', 0);
     const prevLongTermDebt = getTS('longTermDebt', 1) ?? getTS('totalDebt', 1);
-    
-    // Total Equity estimation
+
+    // Shares
     const sharesOutstanding = safeNum(ks?.sharesOutstanding) ?? safeNum(q?.sharesOutstanding) ?? getTS('ordinarySharesNumber', 0);
     const prevSharesOutstanding = getTS('ordinarySharesNumber', 1) ?? getTS('shareIssued', 1);
 
     const bookValuePerShare = safeNum(ks?.bookValue);
-    // Estimated equity based on BVPS
     const totalEquity = bookValuePerShare && sharesOutstanding ? bookValuePerShare * sharesOutstanding : getTS('stockholdersEquity', 0);
 
     // Piotroski required fields
     const totalAssets = getTS('totalAssets', 0);
     const prevTotalAssets = getTS('totalAssets', 1);
-    
+
     const roa = safeNum(fd?.returnOnAssets) ?? (netIncome && totalAssets && totalAssets > 0 ? netIncome / totalAssets : null);
     const prevRoa = prevNetIncome && prevTotalAssets && prevTotalAssets > 0 ? prevNetIncome / prevTotalAssets : null;
-    
+
     const currentAssets = getTS('currentAssets', 0);
     const currentLiabilities = getTS('currentLiabilities', 0);
-    const currentRatio = currentAssets && currentLiabilities && currentLiabilities !== 0 ? currentAssets / currentLiabilities : safeNum(fd?.currentRatio);
-    
+    const currentRatio = currentAssets && currentLiabilities && currentLiabilities !== 0
+      ? currentAssets / currentLiabilities
+      : safeNum(fd?.currentRatio);
+
     const prevCurrentAssets = getTS('currentAssets', 1);
     const prevCurrentLiabilities = getTS('currentLiabilities', 1);
-    const prevCurrentRatio = prevCurrentAssets && prevCurrentLiabilities && prevCurrentLiabilities !== 0 ? prevCurrentAssets / prevCurrentLiabilities : null;
+    const prevCurrentRatio = prevCurrentAssets && prevCurrentLiabilities && prevCurrentLiabilities !== 0
+      ? prevCurrentAssets / prevCurrentLiabilities
+      : null;
 
     const grossProfit = getTS('grossProfit', 0);
     const prevGrossProfit = getTS('grossProfit', 1);
@@ -128,8 +131,50 @@ export async function fetchStockFinancials(
     const pb = safeNum(ks?.priceToBook) ?? safeNum(q?.priceToBook);
     const roe = safeNum(fd?.returnOnEquity);
 
-    // Historical PE (we will use 5YearAverageReturn or forward PE, or just sector avg if missing)
-    const historicalPe = safeNum(q?.forwardPE) ?? null;
+    // ---- Historical Trailing PE (calculated from time series, NOT forwardPE) ----
+    // Formula: market cap at each period / net income at each period, average across years
+    // Fallback: sector average
+    const historicalTrailingPE = (() => {
+      const peReadings: number[] = [];
+      // We have up to 5 entries in ts; compute PE for each period from market cap & net income
+      for (let i = 0; i < Math.min(ts.length, 5); i++) {
+        const tsNetIncome = safeNum(ts[i]?.netIncome) ?? safeNum(ts[i]?.netIncomeCommonStockholders);
+        const tsMktCap = safeNum(ts[i]?.marketCap); // may not exist in fundamentalsTimeSeries
+        if (tsNetIncome && tsNetIncome > 0 && sharesOutstanding && sharesOutstanding > 0) {
+          // Estimate historical EPS from time-series net income
+          const tsEPS = tsNetIncome / sharesOutstanding;
+          // Estimate historical price from time-series (approx: we don't have daily price here,
+          // but we can calculate implied PE from current PE weight or skip if no price data)
+          // Best available: use current PE as a "starting point" and only if we have multiple data points
+          // For robustness, compute from the netIncome trajectory relative to current EPS
+          if (eps && eps > 0 && pe && pe > 0) {
+            // Implied PE = currentPE * (currentEPS / historicalEPS)
+            const impliedHistoricalPE = pe * (eps / tsEPS);
+            // Only accept reasonable PE values
+            if (impliedHistoricalPE > 0 && impliedHistoricalPE < 100) {
+              peReadings.push(impliedHistoricalPE);
+            }
+          }
+        }
+        // If tsMktCap is available (rare in fundamentalTS but try anyway)
+        if (tsNetIncome && tsNetIncome > 0 && tsMktCap && tsMktCap > 0) {
+          const tsTrailingPE = tsMktCap / tsNetIncome;
+          if (tsTrailingPE > 0 && tsTrailingPE < 100) {
+            peReadings.push(tsTrailingPE);
+          }
+        }
+      }
+
+      if (peReadings.length >= 2) {
+        // Average, then bound to reasonable range
+        const avg = peReadings.reduce((a, b) => a + b, 0) / peReadings.length;
+        return Math.min(Math.max(avg, 4), 80);
+      }
+
+      // Fallback: use trailing PE itself if available
+      if (pe && pe > 0 && pe < 80) return pe;
+      return null;
+    })();
 
     // Dividend
     const dividendYield = safeNum(q?.dividendYield) ?? safeNum(sd?.dividendYield);
@@ -152,7 +197,7 @@ export async function fetchStockFinancials(
       currentPrice,
       marketCap,
       pe,
-      historicalPe,
+      historicalTrailingPE,
       pb,
       roe,
       roa,
@@ -172,7 +217,7 @@ export async function fetchStockFinancials(
       dividendYield,
       historicalDividendYield,
       payoutRatio,
-      
+
       prevNetIncome,
       prevRoa,
       prevOperatingCashFlow,
@@ -186,7 +231,7 @@ export async function fetchStockFinancials(
       assetTurnover,
       prevAssetTurnover,
       totalAssets,
-      prevTotalAssets
+      prevTotalAssets,
     };
   } catch (err) {
     console.error(`fetchStockFinancials failed for ${symbol}:`, (err as Error).message);

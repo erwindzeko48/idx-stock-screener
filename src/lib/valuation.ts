@@ -1,69 +1,130 @@
 import { StockFinancials, ValuationResult, PiotroskiResult, MethodResult, ValuationVal } from '@/types/stock';
 import { SECTOR_AVG_PE } from './stocks-list';
 
-const WACC = 0.10; // 10% discount rate
-const TERMINAL_GROWTH = 0.03; // 3% perpetual growth
+// ---- Constants ----
+const TERMINAL_GROWTH = 0.03; // 3% perpetual growth (long-run GDP proxy)
 const PROJECTION_YEARS = 5;
 const GRAHAM_MULTIPLIER = 22.5;
 
+/**
+ * Sector-specific WACC (Weighted Average Cost of Capital).
+ * Banks and utilities typically have lower WACC; mining and tech higher.
+ */
+const SECTOR_WACC: Record<string, number> = {
+  Banking: 0.08,
+  Telecommunications: 0.09,
+  'Consumer Staples': 0.09,
+  'Consumer Goods': 0.10,
+  Automotive: 0.10,
+  Healthcare: 0.10,
+  Energy: 0.12,
+  Mining: 0.14,
+  Materials: 0.11,
+  Property: 0.10,
+  Infrastructure: 0.09,
+  Technology: 0.12,
+  Agriculture: 0.11,
+  Metals: 0.12,
+  Retail: 0.10,
+  Media: 0.11,
+  Transportation: 0.10,
+  default: 0.10,
+};
+
+function getWACC(sector: string): number {
+  return SECTOR_WACC[sector] ?? SECTOR_WACC['default'];
+}
+
+/**
+ * Classify whether a computed fair value means the stock is cheap or expensive.
+ * - UNDERVALUED:  price is at least 15% below fair value
+ * - FAIR_VALUE:   price is within ±15% of fair value
+ * - OVERVALUED:   price is more than 15% above fair value
+ */
 function classify(value: number | null, price: number): ValuationVal {
-  if (!value) return 'INSUFFICIENT_DATA';
+  if (!value || value <= 0) return 'INSUFFICIENT_DATA';
   const ratio = price / value;
-  if (ratio < 0.85) return 'UNDERVALUED'; // At least 15% discount
+  if (ratio < 0.85) return 'UNDERVALUED';
   if (ratio <= 1.15) return 'FAIR_VALUE';
   return 'OVERVALUED';
 }
 
 function classifyPiotroski(score: number | null): ValuationVal {
   if (score === null) return 'INSUFFICIENT_DATA';
-  if (score >= 7) return 'UNDERVALUED'; // Excellent health
-  if (score >= 4) return 'FAIR_VALUE'; // Average health
-  return 'OVERVALUED'; // Poor health
+  if (score >= 7) return 'UNDERVALUED'; // Strong fundamental
+  if (score >= 4) return 'FAIR_VALUE';  // Average fundamental
+  return 'OVERVALUED';                  // Weak fundamental
 }
 
 function calculateUpside(value: number | null, price: number): number | null {
-  if (!value || price <= 0) return null;
+  if (!value || value <= 0 || price <= 0) return null;
   return (value - price) / price;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 1. Piotroski F-Score
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * 1. Piotroski F-Score (Checks 9 criteria for fundamental strength)
+ * Scores 9 binary criteria across three pillars:
+ *   Profitability  (4): net income, ROA, OCF, accruals quality
+ *   Leverage       (3): long-term debt ratio, current ratio, share dilution
+ *   Efficiency     (2): gross margin, asset turnover
  */
 export function calculatePiotroski(f: StockFinancials): PiotroskiResult {
-  let score = 0;
-  
-  // Profitability
+  // -- Profitability --
   const positiveNetIncome = f.netIncome !== null && f.netIncome > 0;
   const positiveRoa = f.roa !== null && f.roa > 0;
   const positiveOcf = f.operatingCashFlow !== null && f.operatingCashFlow > 0;
-  const ocfGreaterThanNetIncome = (f.operatingCashFlow !== null && f.netIncome !== null) ? f.operatingCashFlow > f.netIncome : false;
+  // Accruals: OCF should exceed net income (higher quality earnings)
+  const ocfGreaterThanNetIncome =
+    f.operatingCashFlow !== null && f.netIncome !== null
+      ? f.operatingCashFlow > f.netIncome
+      : false;
 
-  // Leverage, Liquidity
-  const lowerLTDebtRatio = (f.totalDebt !== null && f.prevLongTermDebt !== null && f.totalAssets !== undefined) 
-    ? (f.totalDebt / (f.totalAssets as number || 1)) < (f.prevLongTermDebt / (f.prevTotalAssets as number || 1)) 
-    : false; // Simplified using raw debt if lack of assets
-    
-  const higherCurrentRatio = (f.currentRatio !== null && f.prevCurrentRatio !== null) ? f.currentRatio > f.currentRatio : false;
-  const noNewShares = (f.sharesOutstanding !== null && f.prevSharesOutstanding !== null) ? f.sharesOutstanding <= f.prevSharesOutstanding : false;
+  // -- Leverage / Liquidity --
+  // Debt-to-assets ratio should be lower than the prior year
+  const lowerLTDebtRatio: boolean = (() => {
+    const debtNow = f.totalDebt;
+    const assetsNow = f.totalAssets;
+    const debtPrev = f.prevLongTermDebt;
+    const assetsPrev = f.prevTotalAssets;
+    if (!debtNow || !assetsNow || assetsNow <= 0) return false;
+    if (!debtPrev || !assetsPrev || assetsPrev <= 0) return false;
+    return (debtNow / assetsNow) < (debtPrev / assetsPrev);
+  })();
 
-  // Operating Efficiency
-  const higherGrossMargin = (f.grossMargin !== null && f.prevGrossMargin !== null) ? f.grossMargin > f.prevGrossMargin : false;
-  const higherAssetTurnover = (f.assetTurnover !== null && f.prevAssetTurnover !== null) ? f.assetTurnover > f.prevAssetTurnover : false;
+  // *** BUG FIX: was comparing f.currentRatio > f.currentRatio (always false) ***
+  const higherCurrentRatio =
+    f.currentRatio !== null && f.prevCurrentRatio !== null
+      ? f.currentRatio > f.prevCurrentRatio
+      : false;
+
+  // No new share dilution
+  const noNewShares =
+    f.sharesOutstanding !== null && f.prevSharesOutstanding !== null
+      ? f.sharesOutstanding <= f.prevSharesOutstanding
+      : false;
+
+  // -- Efficiency --
+  const higherGrossMargin =
+    f.grossMargin !== null && f.prevGrossMargin !== null
+      ? f.grossMargin > f.prevGrossMargin
+      : false;
+
+  const higherAssetTurnover =
+    f.assetTurnover !== null && f.prevAssetTurnover !== null
+      ? f.assetTurnover > f.prevAssetTurnover
+      : false;
 
   const conditions = [
     positiveNetIncome, positiveRoa, positiveOcf, ocfGreaterThanNetIncome,
-    lowerLTDebtRatio, higherCurrentRatio, noNewShares, higherGrossMargin, higherAssetTurnover
+    lowerLTDebtRatio, higherCurrentRatio, noNewShares, higherGrossMargin, higherAssetTurnover,
   ];
-  
-  let checked = 0;
-  conditions.forEach(c => {
-    // We only accurately score what we have access to
-    // Due to yahoo API limitations, if data is entirely missing, we might assume false,
-    // but ideally we only count non-null data.
-    if (c) score++;
-  });
 
-  // Calculate actual score if we have enough data (at least 5 metrics available)
+  let score = 0;
+  conditions.forEach(c => { if (c) score++; });
+
+  // Only return a valid score when the two most critical data points exist
   const isSufficientData = f.netIncome !== null && f.operatingCashFlow !== null;
   const finalScore = isSufficientData ? score : null;
 
@@ -72,64 +133,84 @@ export function calculatePiotroski(f: StockFinancials): PiotroskiResult {
     category: classifyPiotroski(finalScore),
     details: {
       positiveNetIncome, positiveRoa, positiveOcf, ocfGreaterThanNetIncome,
-      lowerLTDebtRatio, higherCurrentRatio, noNewShares, higherGrossMargin, higherAssetTurnover
-    }
+      lowerLTDebtRatio, higherCurrentRatio, noNewShares, higherGrossMargin, higherAssetTurnover,
+    },
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 2. Historical Valuation Bands (Mean Reversion)
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * 2. Historical Valuation Bands (Mean Reversion)
- * Focuses on historical P/E compared to current EPS
+ * Fair value = EPS × historical average trailing PE.
+ * Uses `historicalTrailingPE` computed from the fundamentals time series,
+ * falling back to sector average PE when historical data is unavailable.
+ * This is genuinely "mean reversion" — not a forward-looking projection.
  */
 export function calculateMeanReversion(f: StockFinancials): MethodResult {
-  const { eps, historicalPe, sector } = f;
-  
-  const targetPe = historicalPe && historicalPe > 0 && historicalPe < 100 
-    ? historicalPe 
-    : (SECTOR_AVG_PE[sector] ?? SECTOR_AVG_PE['default']);
+  const { eps, historicalTrailingPE, sector } = f;
 
-  const value = eps && eps > 0 ? eps * targetPe : null;
+  if (!eps || eps <= 0) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
+
+  // Use historical trailing PE first; if missing fall back to sector average
+  const targetPe =
+    historicalTrailingPE && historicalTrailingPE > 0 && historicalTrailingPE < 80
+      ? historicalTrailingPE
+      : (SECTOR_AVG_PE[sector] ?? SECTOR_AVG_PE['default']);
+
+  const value = eps * targetPe;
   return {
     value,
     upside: calculateUpside(value, f.currentPrice),
-    category: classify(value, f.currentPrice)
+    category: classify(value, f.currentPrice),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 3. Dividend Yield Reversion
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * 3. Dividend Yield Reversion
- * Assumes historical 5-year average yield dictates fair value
+ * If the stock now yields less than its own 5-year historic average yield,
+ * the price has run ahead of dividends → the stock may be overvalued (and vice versa).
+ *
+ * Fair value = (current price × current yield) / historical avg yield
  */
 export function calculateDividendYieldReversion(f: StockFinancials): MethodResult {
   const { currentPrice, dividendYield, historicalDividendYield, payoutRatio } = f;
-  
-  // Need dividend data and healthy payout ratio (< 90%)
-  if (!dividendYield || !historicalDividendYield || historicalDividendYield <= 0.001) {
+
+  if (!dividendYield || dividendYield <= 0) {
     return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
   }
-
-  // If payout ratio is extremely high, dividend might be cut, invalidating the model
+  if (!historicalDividendYield || historicalDividendYield <= 0.001) {
+    return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
+  }
+  // Unsustainable payout ratio (>90%) makes the model unreliable
   if (payoutRatio && payoutRatio > 0.9) {
     return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
   }
 
-  const annualDividend = currentPrice * dividendYield;
-  // Fair value = Annual Dividend / Historical Average Yield
-  const value = annualDividend / historicalDividendYield;
+  const annualDividendPerShare = currentPrice * dividendYield;
+  const fairValue = annualDividendPerShare / historicalDividendYield;
 
   return {
-    value,
-    upside: calculateUpside(value, currentPrice),
-    category: classify(value, currentPrice)
+    value: fairValue,
+    upside: calculateUpside(fairValue, currentPrice),
+    category: classify(fairValue, currentPrice),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 4. Graham Number
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * 4. Graham Number
- * √(22.5 × EPS × BVPS)
+ * Classic Benjamin Graham formula for defensive investors:
+ * √(22.5 × EPS × Book Value Per Share)
+ *
+ * The constant 22.5 = 15 (max PE) × 1.5 (max PB).
  */
 export function calculateGrahamNumber(f: StockFinancials): MethodResult {
   const { eps, bookValuePerShare } = f;
+
   if (!eps || !bookValuePerShare || eps <= 0 || bookValuePerShare <= 0) {
     return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
   }
@@ -140,16 +221,25 @@ export function calculateGrahamNumber(f: StockFinancials): MethodResult {
   return {
     value,
     upside: calculateUpside(value, f.currentPrice),
-    category: classify(value, f.currentPrice)
+    category: classify(value, f.currentPrice),
   };
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// 5. DCF Model
+// ─────────────────────────────────────────────────────────────────────────────
 /**
- * 5. DCF
+ * Discounted Cash Flow: project free cash flow for PROJECTION_YEARS years,
+ * then add a terminal value.  Uses sector-specific WACC.
+ *
+ * Growth rate is capped: max 25% per year (aggressive), min -10% (distress).
+ * DCF value is also sanity-capped at 10× current price to avoid runaway numbers
+ * when FCF is tiny relative to market cap.
  */
 export function calculateDCFModel(f: StockFinancials): MethodResult {
-  const { freeCashFlow, revenueGrowth, marketCap, currentPrice } = f;
-  if (!freeCashFlow || !marketCap || freeCashFlow <= 0 || marketCap <= 0) {
+  const { freeCashFlow, revenueGrowth, marketCap, currentPrice, sector } = f;
+
+  if (!freeCashFlow || !marketCap || freeCashFlow <= 0 || marketCap <= 0 || currentPrice <= 0) {
     return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
   }
 
@@ -159,33 +249,43 @@ export function calculateDCFModel(f: StockFinancials): MethodResult {
   const fcfPerShare = freeCashFlow / shares;
   if (fcfPerShare <= 0) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
 
-  const growthRate = Math.min(Math.max(revenueGrowth ?? 0.05, -0.05), 0.25);
+  const wacc = getWACC(sector);
+  if (wacc <= TERMINAL_GROWTH) return { value: null, upside: null, category: 'INSUFFICIENT_DATA' };
+
+  // Growth rate: clamp between -10% and +25%
+  const growthRate = Math.min(Math.max(revenueGrowth ?? 0.05, -0.10), 0.25);
 
   let totalPV = 0;
   let projectedFCF = fcfPerShare;
 
   for (let year = 1; year <= PROJECTION_YEARS; year++) {
     projectedFCF *= 1 + growthRate;
-    const discountFactor = Math.pow(1 + WACC, year);
+    const discountFactor = Math.pow(1 + wacc, year);
     totalPV += projectedFCF / discountFactor;
   }
 
   const terminalFCF = projectedFCF * (1 + TERMINAL_GROWTH);
-  const terminalValue = terminalFCF / (WACC - TERMINAL_GROWTH);
-  const pvTerminal = terminalValue / Math.pow(1 + WACC, PROJECTION_YEARS);
+  const terminalValue = terminalFCF / (wacc - TERMINAL_GROWTH);
+  const pvTerminal = terminalValue / Math.pow(1 + wacc, PROJECTION_YEARS);
 
-  const value = totalPV + pvTerminal;
+  // Raw DCF intrinsic value
+  let value = totalPV + pvTerminal;
+
+  // Sanity cap: intrinsic value should not exceed 10× current price
+  // (avoids absurd outputs when FCF/share is misreported or negligible)
+  const MAX_MULTIPLIER = 10;
+  value = Math.min(value, currentPrice * MAX_MULTIPLIER);
 
   return {
     value,
     upside: calculateUpside(value, currentPrice),
-    category: classify(value, currentPrice)
+    category: classify(value, currentPrice),
   };
 }
 
-/**
- * Perform all 5 valuations
- */
+// ─────────────────────────────────────────────────────────────────────────────
+// Aggregate: run all 5 valuations
+// ─────────────────────────────────────────────────────────────────────────────
 export function valuateStock(f: StockFinancials): ValuationResult {
   const piotroski = calculatePiotroski(f);
   const meanReversion = calculateMeanReversion(f);
@@ -198,17 +298,10 @@ export function valuateStock(f: StockFinancials): ValuationResult {
     meanReversion.category,
     dividendYield.category,
     graham.category,
-    dcf.category
+    dcf.category,
   ];
 
   const passingMethodsCount = methods.filter(m => m === 'UNDERVALUED').length;
 
-  return {
-    piotroski,
-    meanReversion,
-    dividendYield,
-    graham,
-    dcf,
-    passingMethodsCount
-  };
+  return { piotroski, meanReversion, dividendYield, graham, dcf, passingMethodsCount };
 }

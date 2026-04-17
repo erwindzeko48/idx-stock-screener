@@ -6,6 +6,7 @@ import { StockDetail } from '@/types/stock';
 import { PriceChart } from '@/components/PriceChart';
 import { ValuationBreakdown } from '@/components/ValuationBreakdown';
 import { FundamentalMetrics } from '@/components/FundamentalMetrics';
+import { BacktestSection } from '@/components/BacktestSection';
 import {
   ArrowLeft,
   Building2,
@@ -166,9 +167,10 @@ export default function StockDetailPage() {
           </div>
           <div>
             <h2 className="text-sm font-semibold mb-3 flex items-center gap-2" style={{ color: 'var(--text-secondary)' }}>
-              Breakdown 5 Metode Valuasi 
+              Breakdown 5 Metode Valuasi
             </h2>
             <ValuationBreakdown valuation={valuation} currentPrice={financials.currentPrice} />
+            <BacktestSection symbol={financials.symbol} />
           </div>
         </div>
 

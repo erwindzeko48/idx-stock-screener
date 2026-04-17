@@ -6,7 +6,8 @@ export interface StockFinancials {
   marketCap: number;
   // Key ratios
   pe: number | null;
-  historicalPe: number | null; // 5-Year Average PE
+  /** Calculated trailing PE average from historical time-series (not forward PE) */
+  historicalTrailingPE: number | null;
   pb: number | null;
   roe: number | null;
   roa: number | null;
@@ -31,7 +32,7 @@ export interface StockFinancials {
   dividendYield: number | null;
   historicalDividendYield: number | null; // 5-Year Average Yield
   payoutRatio: number | null;
-  
+
   // Historical context for Piotroski
   prevNetIncome: number | null;
   prevRoa: number | null;
@@ -100,6 +101,38 @@ export interface PricePoint {
 
 export interface StockDetail extends StockData {
   priceHistory: PricePoint[];
+}
+
+// ---- Backtest / Simulation Types ----
+
+export interface BacktestMethodResult {
+  /** Signal generated 1 year ago */
+  signal: ValuationVal;
+  /** Predicted fair value 1 year ago */
+  fairValueThen: number | null;
+  /** Stock price at signal date (1 year ago) */
+  priceThen: number;
+  /** Stock price today */
+  priceNow: number;
+  /** Actual return if bought at signal: (priceNow - priceThen) / priceThen */
+  actualReturnPct: number;
+  /** Did this method's Undervalued signal turn out correct (positive return)? */
+  accurate: boolean | null;
+}
+
+export interface BacktestResult {
+  symbol: string;
+  priceThen: number;
+  priceNow: number;
+  dateOfSignal: string;
+  actualReturnPct: number;
+  methods: {
+    piotroski: { scoreThen: number | null; signal: ValuationVal };
+    meanReversion: BacktestMethodResult;
+    dividendYield: BacktestMethodResult;
+    graham: BacktestMethodResult;
+    dcf: BacktestMethodResult;
+  };
 }
 
 export type SortField = 'passingCount' | 'piotroski' | 'dcfUpside' | 'grahamUpside' | 'name';
