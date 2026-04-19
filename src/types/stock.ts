@@ -4,6 +4,7 @@ export interface StockFinancials {
   sector: string;
   currentPrice: number;
   marketCap: number;
+
   // Key ratios
   pe: number | null;
   /** Calculated trailing PE average from historical time-series (not forward PE) */
@@ -12,6 +13,19 @@ export interface StockFinancials {
   roe: number | null;
   roa: number | null;
   debtToEquity: number | null;
+
+  // Momentum
+  return12m: number | null;
+  return6m: number | null;
+
+  // History arrays (index 0 is newest, index 4 is oldest, up to 5 years)
+  epsHistory: (number | null)[];
+  fcfHistory: (number | null)[];
+  netIncomeHistory: (number | null)[];
+  revenueHistory: (number | null)[];
+  dividendHistory: (number | null)[];
+  sharesHistory: (number | null)[];
+
   // Income statement
   eps: number | null;
   revenueGrowth: number | null;
@@ -48,6 +62,7 @@ export interface StockFinancials {
   prevAssetTurnover: number | null;
   totalAssets: number | null;
   prevTotalAssets: number | null;
+  grossMarginHistory: (number | null)[];
 }
 
 export type ValuationVal = 'UNDERVALUED' | 'FAIR_VALUE' | 'OVERVALUED' | 'INSUFFICIENT_DATA';
@@ -56,6 +71,9 @@ export interface MethodResult {
   value: number | null;
   upside: number | null;
   category: ValuationVal;
+  confidence: number; // 0 to 1
+  weight: number;     // 0 to 1
+  reasoning: string;
 }
 
 export interface PiotroskiResult {
@@ -80,7 +98,33 @@ export interface ValuationResult {
   dividendYield: MethodResult;
   graham: MethodResult;
   dcf: MethodResult;
-  // Summary fields for simpler sorting on dashboard
+  
+  // Composite & Final Scoring
+  intrinsic_value: number | null;
+  mos: number | null; // Margin of safety
+  mos_normalized: number; // Scaled via non-linear curve
+  confidence: number;       // 0 to 1
+  quality: number; // 0 to 1 (usually Piotroski / 9)
+  risk: number;             // 0 to 1, higher is riskier
+  final_score: number;            // 0 to 1 composite score
+  recommendation: 'Strong Buy' | 'Buy' | 'Hold' | 'Avoid';
+  type: string;        // e.g., 'DIVIDEND', 'GROWTH', 'BANK'
+  top_methods: string[];         // Key methods that drove the valuation, e.g., ['PE', 'DCF']
+  warnings: string[];
+  explanation: string[];         // Key reasons for recommendation
+
+  // Advanced Metrics
+  final_rank_score: number;      // 0 to 1 combining final_score and momentum
+  momentum_score: number;        // 0 to 1 based on 12-month return
+  stability_score: number;       // 0 to 1 based on earnings/FCF consistency
+  market_regime: 'BULL' | 'BEAR' | 'SIDEWAYS';
+  factor_exposure: {
+    value: number;               // 0 to 1
+    growth: number;              // 0 to 1
+    quality: number;             // 0 to 1
+  };
+
+  // Summary fields (legacy but kept for sorting if needed)
   passingMethodsCount: number; // 0 to 5
 }
 
@@ -135,6 +179,6 @@ export interface BacktestResult {
   };
 }
 
-export type SortField = 'passingCount' | 'piotroski' | 'dcfUpside' | 'grahamUpside' | 'name';
+export type SortField = 'passingCount' | 'finalScore' | 'piotroski' | 'dcfUpside' | 'grahamUpside' | 'name';
 export type SortOrder = 'asc' | 'desc';
 export type FilterCategory = 'ALL' | 'UNDERVALUED' | 'FAIR_VALUE' | 'OVERVALUED';

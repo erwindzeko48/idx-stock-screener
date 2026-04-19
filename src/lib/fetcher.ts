@@ -72,13 +72,20 @@ export async function fetchStockFinancials(
     // ── Shares outstanding ────────────────────────────────────────────────────
     const sharesOutstanding =
       safeNum(ks?.sharesOutstanding) ??
-      safeNum(q?.sharesOutstanding) ??
+      safeNum(ks?.impliedSharesOutstanding) ??
       getTS('ordinarySharesNumber', 0) ??
       getTS('shareIssued', 0);
 
     const prevSharesOutstanding =
       getTS('ordinarySharesNumber', 1) ??
       getTS('shareIssued', 1);
+
+    // ── Momentum ─────────────────────────────────────────────────────────────
+    const return12m = safeNum(ks?.['52WeekChange']);
+    const twoHundredAvg = safeNum(sd?.twoHundredDayAverage);
+    const return6m = (currentPrice && twoHundredAvg && twoHundredAvg > 0) 
+      ? (currentPrice - twoHundredAvg) / twoHundredAvg 
+      : null;
 
     // ── Revenue ───────────────────────────────────────────────────────────────
     const revenue =
@@ -310,6 +317,45 @@ export async function fetchStockFinancials(
     const enterpriseValue = safeNum(ks?.enterpriseValue);
     const ebitda = safeNum(fd?.ebitda);
 
+    // ── Extract Historical Arrays (0 = newest, 4 = oldest, up to 5 elements) ──
+    const netIncomeHistory: (number | null)[] = [];
+    const fcfHistory: (number | null)[] = [];
+    const revenueHistory: (number | null)[] = [];
+    const sharesHistory: (number | null)[] = [];
+    const epsHistory: (number | null)[] = [];
+    const dividendHistory: (number | null)[] = [];
+    const grossMarginHistory: (number | null)[] = [];
+
+    for (let i = 0; i < Math.min(ts.length, 5); i++) {
+      const data = ts[i] || {};
+      
+      const tsNI = safeNum(data.netIncome) ?? safeNum(data.netIncomeCommonStockholders);
+      netIncomeHistory.push(tsNI);
+
+      const tsRev = safeNum(data.totalRevenue) ?? safeNum(data.operatingRevenue);
+      revenueHistory.push(tsRev);
+
+      const tsShares = safeNum(data.ordinarySharesNumber) ?? safeNum(data.shareIssued);
+      sharesHistory.push(tsShares);
+
+      if (tsNI !== null && tsShares && tsShares > 0) epsHistory.push(tsNI / tsShares);
+      else epsHistory.push(null);
+
+      const tsOcf = safeNum(data.operatingCashFlow);
+      const tsCapex = safeNum(data.capitalExpenditure);
+      if (tsOcf !== null && tsCapex !== null) fcfHistory.push(tsOcf - Math.abs(tsCapex));
+      else if (tsOcf !== null) fcfHistory.push(tsOcf); // Fallback for banks
+      else fcfHistory.push(null);
+
+      const tsDiv = safeNum(data.commonStockDividendPaid) ?? safeNum(data.dividendsPayable);
+      if (tsDiv !== null && tsShares && tsShares > 0) dividendHistory.push(Math.abs(tsDiv) / tsShares);
+      else dividendHistory.push(null);
+
+      const tsGross = safeNum(data.grossProfit);
+      if (tsGross !== null && tsRev && tsRev > 0) grossMarginHistory.push(tsGross / tsRev);
+      else grossMarginHistory.push(null);
+    }
+
     return {
       symbol,
       name: q?.longName ?? q?.shortName ?? name,
@@ -322,6 +368,9 @@ export async function fetchStockFinancials(
       roe,
       roa,
       debtToEquity,
+      
+      return12m,
+      return6m,
       eps,
       revenueGrowth,
       epsGrowth,
@@ -337,6 +386,14 @@ export async function fetchStockFinancials(
       dividendYield,
       historicalDividendYield,
       payoutRatio,
+
+      epsHistory,
+      fcfHistory,
+      netIncomeHistory,
+      revenueHistory,
+      dividendHistory,
+      sharesHistory,
+      grossMarginHistory,
 
       prevNetIncome,
       prevRoa,

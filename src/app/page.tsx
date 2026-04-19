@@ -3,15 +3,16 @@
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { StockTable } from '@/components/StockTable';
 import { StatsCard } from '@/components/StatsCard';
-import { TableSkeleton } from '@/components/LoadingSpinner';
 import { HealthFilterPanel, HealthFilters, DEFAULT_FILTERS } from '@/components/HealthFilterPanel';
+import { TableSkeleton } from '@/components/LoadingSpinner';
 import { StockData } from '@/types/stock';
 import { TrendingUp, BarChart2, CheckSquare, Activity, RefreshCw } from 'lucide-react';
+import { applyDynamicThresholds } from '@/lib/engines/decisionEngine';
 
 function DashboardStats({ stocks }: { stocks: StockData[] }) {
-  const undervalued = stocks.filter((s) => s.valuation.passingMethodsCount >= 3).length;
-  const excellent = stocks.filter((s) => s.valuation.passingMethodsCount === 5).length;
-  const piotroskiPass = stocks.filter((s) => s.valuation.piotroski.score !== null && s.valuation.piotroski.score >= 7).length;
+  const strongBuys = stocks.filter((s) => s.valuation.recommendation === 'Strong Buy').length;
+  const buys = stocks.filter((s) => s.valuation.recommendation === 'Buy').length;
+  const piotroskiPass = stocks.filter((s) => s.valuation.quality >= 0.77).length; // 7/9 ≈ 0.77
 
   return (
     <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-8">
@@ -24,17 +25,17 @@ function DashboardStats({ stocks }: { stocks: StockData[] }) {
         glowColor="rgba(59, 130, 246, 0.08)"
       />
       <StatsCard
-        label="Undervalued Mayoritas"
-        value={undervalued}
-        subValue={`${stocks.length ? ((undervalued / stocks.length) * 100).toFixed(0) : 0}% lulus 3+ metode`}
+        label="Sinyal Strong Buy"
+        value={strongBuys}
+        subValue="Lolos saringan institusional"
         icon={<TrendingUp size={16} />}
         color="#22c55e"
         glowColor="rgba(34, 197, 94, 0.08)"
       />
       <StatsCard
-        label="Lulus Sempurna (5/5)"
-        value={excellent}
-        subValue="Semua metode sepakat"
+        label="Sinyal Buy"
+        value={buys}
+        subValue="Valuasi menarik"
         icon={<BarChart2 size={16} />}
         color="#eab308"
         glowColor="rgba(234, 179, 8, 0.08)"
@@ -193,7 +194,7 @@ export default function DashboardPage() {
   // ── Client-side health filter ────────────────────────────────────────────
   const filteredStocks = useMemo(() => {
     const f = healthFilters;
-    return stocks.filter(({ financials: fin }) => {
+    const valid = stocks.filter(({ financials: fin }) => {
       if (f.roe.enabled) {
         if (fin.roe === null) return false;
         if ((fin.roe * 100) < f.roe.min) return false;
@@ -224,6 +225,14 @@ export default function DashboardPage() {
       }
       return true;
     });
+
+    // Make a deep clone to not mutate React state directly
+    const clonedValid = JSON.parse(JSON.stringify(valid)) as StockData[];
+    
+    // Dynamically rank signals across the passed filters
+    applyDynamicThresholds(clonedValid);
+
+    return clonedValid;
   }, [stocks, healthFilters]);
 
   return (

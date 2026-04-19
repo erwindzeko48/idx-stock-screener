@@ -2,6 +2,7 @@ import { IDX_STOCKS } from '@/lib/stocks-list';
 import { fetchStockFinancials } from '@/lib/fetcher';
 import { valuateStock } from '@/lib/valuation';
 import { StockData } from '@/types/stock';
+import { detectMarketRegime } from '@/lib/engines/marketRegimeEngine';
 
 export const dynamic = 'force-dynamic';
 
@@ -16,6 +17,8 @@ export async function GET(request: Request) {
   const endIndex = startIndex + limit;
   
   const targetStocks = IDX_STOCKS.slice(startIndex, endIndex);
+
+  const marketRegime = await detectMarketRegime();
 
   const encoder = new TextEncoder();
 
@@ -36,7 +39,7 @@ export async function GET(request: Request) {
           batch.map(async ([symbol, name, sector]) => {
             const financials = await fetchStockFinancials(symbol, name, sector);
             if (!financials) return null;
-            const valuation = valuateStock(financials);
+            const valuation = valuateStock(financials, marketRegime);
             // No health check needed since Piotroski serves as health check inside valuation
             return { financials, valuation } as StockData;
           })

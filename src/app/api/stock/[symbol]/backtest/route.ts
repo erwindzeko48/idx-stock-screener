@@ -2,12 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import YahooFinance from 'yahoo-finance2';
 import { BacktestResult, BacktestMethodResult, StockFinancials, ValuationVal } from '@/types/stock';
 import { SECTOR_AVG_PE } from '@/lib/stocks-list';
+import { detectMarketRegime } from '@/lib/engines/marketRegimeEngine';
 import {
   calculatePiotroski,
   calculateMeanReversion,
-  calculateDividendYieldReversion,
   calculateGrahamNumber,
+  calculateDividendYieldReversion,
   calculateDCFModel,
+  classificationEngine,
+  getAdaptiveWeights,
+  valuateStock,
 } from '@/lib/valuation';
 
 const yf = new YahooFinance({ suppressNotices: ['yahooSurvey', 'ripHistorical'] });
@@ -245,14 +249,22 @@ export async function GET(
       prevAssetTurnover,
       totalAssets: totalAssetsThen,
       prevTotalAssets,
+      
+      return12m: null,
+      return6m: null,
+      
+      grossMarginHistory: [],
+      epsHistory: [],
+      fcfHistory: [],
+      netIncomeHistory: [],
+      revenueHistory: [],
+      dividendHistory: [],
+      sharesHistory: [],
     };
 
     // ── 4. Run all valuation models with 1-year-ago snapshot ─────────────────
-    const piotroskiThen = calculatePiotroski(financialsThen);
-    const meanReversionThen = calculateMeanReversion(financialsThen);
-    const dividendYieldThen_ = calculateDividendYieldReversion(financialsThen);
-    const grahamThen = calculateGrahamNumber(financialsThen);
-    const dcfThen = calculateDCFModel(financialsThen);
+    const historicalRegime = await detectMarketRegime(targetDate.toISOString());
+    const valuationThen = valuateStock(financialsThen, historicalRegime);
 
     const actualReturnPct = priceNow > 0 && priceThen > 0
       ? ((priceNow - priceThen) / priceThen) * 100
@@ -282,11 +294,11 @@ export async function GET(
       dateOfSignal,
       actualReturnPct,
       methods: {
-        piotroski: { scoreThen: piotroskiThen.score, signal: piotroskiThen.category },
-        meanReversion: buildMethodResult(meanReversionThen.category, meanReversionThen.value),
-        dividendYield: buildMethodResult(dividendYieldThen_.category, dividendYieldThen_.value),
-        graham: buildMethodResult(grahamThen.category, grahamThen.value),
-        dcf: buildMethodResult(dcfThen.category, dcfThen.value),
+        piotroski: { scoreThen: valuationThen.piotroski.score, signal: valuationThen.piotroski.category },
+        meanReversion: buildMethodResult(valuationThen.meanReversion.category, valuationThen.meanReversion.value),
+        dividendYield: buildMethodResult(valuationThen.dividendYield.category, valuationThen.dividendYield.value),
+        graham: buildMethodResult(valuationThen.graham.category, valuationThen.graham.value),
+        dcf: buildMethodResult(valuationThen.dcf.category, valuationThen.dcf.value),
       },
     };
 

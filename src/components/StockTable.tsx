@@ -55,11 +55,11 @@ function SignalCell({ label, cat, upside }: { label: string, cat: ValuationVal, 
 }
 
 export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) {
-  const [sortField, setSortField] = useState<SortField>('passingCount');
+  const [sortField, setSortField] = useState<SortField | 'finalScore'>('finalScore');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
   const [search, setSearch] = useState('');
 
-  const handleSort = (field: SortField) => {
+  const handleSort = (field: SortField | 'finalScore') => {
     if (sortField === field) {
       setSortOrder((o) => (o === 'asc' ? 'desc' : 'asc'));
     } else {
@@ -84,9 +84,10 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
     data.sort((a, b) => {
       let va: number, vb: number;
       switch (sortField) {
-        case 'passingCount':
-          va = a.valuation.passingMethodsCount;
-          vb = b.valuation.passingMethodsCount;
+        case 'finalScore':
+        case 'passingCount': // alias for backwards compat
+          va = a.valuation.final_score ?? 0;
+          vb = b.valuation.final_score ?? 0;
           break;
         case 'piotroski':
           va = a.valuation.piotroski.score ?? -1;
@@ -113,10 +114,10 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
     return data;
   }, [stocks, search, sortField, sortOrder]);
 
-  const SortBtn = ({ field, children }: { field: SortField; children: React.ReactNode }) => (
+  const SortBtn = ({ field, children }: { field: SortField | 'finalScore'; children: React.ReactNode }) => (
     <button
       onClick={() => handleSort(field)}
-      className={clsx('sort-btn text-[11px] font-semibold tracking-wide uppercase', sortField === field && 'sort-btn-active')}
+      className={clsx('sort-btn text-[11px] font-semibold tracking-wide uppercase flex items-center gap-1', sortField === field && 'sort-btn-active')}
     >
       {children}
       <SortIcon field={field} currentField={sortField} currentOrder={sortOrder} />
@@ -165,7 +166,7 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
             }}
           >
             <div className="flex flex-col justify-start">
-              <SortBtn field="name">Saham</SortBtn>
+               <SortBtn field="finalScore">Sinyal Rekomendasi</SortBtn>
             </div>
             <div className="text-right">
                <span className="text-[11px] font-semibold text-slate-400 uppercase tracking-wide">Harga</span>
@@ -211,26 +212,43 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
                   >
                     {/* Emiten */}
                     <div className="flex items-center gap-2">
-                       <div className="flex flex-col min-w-0">
-                         <div className="flex items-center gap-1.5">
+                       <div className="flex flex-col min-w-0 flex-1">
+                         <div className="flex items-center gap-1.5 mb-1">
                            <p className="font-bold text-sm tracking-tight text-slate-200">
                              {symbol}
                            </p>
-                           <ExternalLink size={10} className="text-slate-500 opacity-0 group-hover:opacity-100" />
+                           <span className={clsx(
+                             "text-[9px] px-1.5 py-0.5 rounded font-bold uppercase",
+                             valuation.recommendation === 'Strong Buy' ? "bg-green-500 text-white" :
+                             valuation.recommendation === 'Buy' ? "bg-green-500/20 text-green-400" :
+                             valuation.recommendation === 'Avoid' ? "bg-red-500/20 text-red-400" :
+                             "bg-slate-700 text-slate-300"
+                           )}>
+                             {valuation.recommendation}
+                           </span>
                          </div>
-                         <p className="text-[10px] text-slate-500 truncate" title={financials.name}>
-                           {financials.name.length > 20 ? financials.name.substring(0, 18) + '...' : financials.name}
-                         </p>
+                         <div className="flex items-center gap-1">
+                           <span className={clsx(
+                             "text-[10px] font-mono",
+                             valuation.risk > 0.5 ? "text-red-400" : "text-slate-500"
+                           )}>
+                             Risiko: {(valuation.risk * 100).toFixed(0)}
+                           </span>
+                           <span className="text-slate-700">•</span>
+                           <p className="text-[10px] text-slate-500 truncate" title={financials.name}>
+                             {financials.name.length > 15 ? financials.name.substring(0, 15) + '...' : financials.name}
+                           </p>
+                         </div>
                        </div>
                     </div>
 
                     {/* Harga */}
                     <div className="text-right">
-                      <p className="font-mono text-sm font-semibold text-slate-300">
-                        {financials.currentPrice.toLocaleString('id-ID')}
-                      </p>
-                      <p className="text-[10px] text-slate-500 mt-0.5">
-                        P/E {financials.pe ? financials.pe.toFixed(1) : '-'}
+                      <p className="font-mono text-[13px] font-semibold text-slate-300 flex flex-col">
+                        <span>{financials.currentPrice.toLocaleString('id-ID')}</span>
+                        {valuation.mos !== null && valuation.mos > 0 && (
+                          <span className="text-[10px] text-green-400">MOS +{(valuation.mos*100).toFixed(0)}%</span>
+                        )}
                       </p>
                     </div>
 
