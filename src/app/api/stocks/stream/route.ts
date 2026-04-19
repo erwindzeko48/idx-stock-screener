@@ -8,6 +8,15 @@ export const dynamic = 'force-dynamic';
 
 const BATCH_SIZE = 3; // Smaller batches = less rate limiting
 
+async function fetchWithRetry(symbol: string, name: string, sector: string) {
+  let financials = await fetchStockFinancials(symbol, name, sector);
+  if (financials) return financials;
+
+  await new Promise((r) => setTimeout(r, 250));
+  financials = await fetchStockFinancials(symbol, name, sector);
+  return financials;
+}
+
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const page = parseInt(searchParams.get('page') || '1', 10);
@@ -37,7 +46,7 @@ export async function GET(request: Request) {
 
         const batchResults = await Promise.allSettled(
           batch.map(async ([symbol, name, sector]) => {
-            const financials = await fetchStockFinancials(symbol, name, sector);
+            const financials = await fetchWithRetry(symbol, name, sector);
             if (!financials) return null;
             const valuation = valuateStock(financials, marketRegime);
             // No health check needed since Piotroski serves as health check inside valuation

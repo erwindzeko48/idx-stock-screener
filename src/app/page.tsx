@@ -96,7 +96,7 @@ export default function DashboardPage() {
   const [healthFilters, setHealthFilters] = useState<HealthFilters>(DEFAULT_FILTERS);
   
   const [page, setPage] = useState(1);
-  const LIMIT = 50;
+  const LIMIT = 100;
   const [hasMore, setHasMore] = useState(true);
 
   const fetchRef = useRef<number>(0);
@@ -107,6 +107,8 @@ export default function DashboardPage() {
     if (!isLoadMore) {
       setStocks([]);
       setLoaded(0);
+      setPage(1);
+      setHasMore(true);
     }
     
     const fetchId = Date.now();
@@ -120,7 +122,6 @@ export default function DashboardPage() {
       const decoder = new TextDecoder();
       let buffer = '';
       
-      let fetchedInThisBatch = 0;
       let totalReturned = 0;
 
       while (true) {
@@ -139,14 +140,13 @@ export default function DashboardPage() {
           try {
             const msg = JSON.parse(trimmed);
             if (msg.type === 'meta') {
-              setTargetBatchCount(msg.returned);
+              setTargetBatchCount(msg.total ?? msg.returned);
               totalReturned = msg.returned;
               if (msg.returned < LIMIT) {
                  setHasMore(false);
               }
             } else if (msg.type === 'stock') {
-              fetchedInThisBatch++;
-              if (!isLoadMore) setLoaded((n) => n + 1);
+              setLoaded((n) => n + 1);
               setStocks((prev) => {
                 // Ensure no duplicates
                 if (prev.find(p => p.financials.symbol === msg.data.financials.symbol)) {
@@ -163,6 +163,12 @@ export default function DashboardPage() {
       }
 
       if (totalReturned === 0) setHasMore(false);
+
+      if (fetchRef.current === fetchId && totalReturned === LIMIT) {
+        const nextPage = pageNum + 1;
+        setPage(nextPage);
+        await fetchData(nextPage, true);
+      }
       
     } catch {
       setError(true);
@@ -302,7 +308,7 @@ export default function DashboardPage() {
 
       {/* Content */}
       {loading && page === 1 && stocks.length === 0 ? (
-        <LoadingProgress loaded={loaded} total={targetBatchCount || 50} />
+        <LoadingProgress loaded={loaded} total={targetBatchCount || LIMIT} />
       ) : error && stocks.length === 0 ? (
         <div className="glass-card p-16 text-center">
           <p className="text-4xl mb-4">⚠️</p>

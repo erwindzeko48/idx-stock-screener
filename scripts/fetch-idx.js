@@ -17,31 +17,37 @@ const req = https.request(options, res => {
   res.on('end', () => {
     try {
       const data = JSON.parse(body);
-      const stocks = data.data.map(d => ({
-        symbol: d.TickerCode + '.JK',
-        name: d.EmitenName,
-        sector: d.SectorName || 'default'
-      }));
+      const raw = (Array.isArray(data?.data) ? data.data : [])
+        .map(d => [
+          `${String(d?.TickerCode || '').trim().toUpperCase()}.JK`,
+          String(d?.EmitenName || d?.TickerCode || '').trim(),
+          String(d?.SectorName || 'default').trim() || 'default',
+        ])
+        .filter(([symbol]) => /^[A-Z0-9]+\.JK$/.test(symbol));
 
-      const fileContent = `// Automatically generated list of ${stocks.length} IDX stocks
-export interface StockItem {
-  symbol: string;
-  name: string;
-  sector: string;
-}
+      const uniqueBySymbol = [...new Map(raw.map(s => [s[0], s])).values()]
+        .sort((a, b) => a[0].localeCompare(b[0]));
 
-export const IDX_STOCKS: StockItem[] = ${JSON.stringify(stocks, null, 2)};
+      const rows = uniqueBySymbol
+        .map(([symbol, name, sector]) => `  ['${symbol.replace(/'/g, "\\'")}', '${name.replace(/'/g, "\\'")}', '${sector.replace(/'/g, "\\'")}']`)
+        .join(',\n');
+
+      const fileContent = `// Automatically generated list of ${uniqueBySymbol.length} IDX stocks from IDX Company Profiles API
+// Format: [symbol, name, sector]
+export const IDX_STOCKS: [string, string, string][] = [
+${rows}
+];
 
 export const SECTOR_AVG_PE: Record<string, number> = {
-  'default': 15.0
+  default: 15,
 };
 
 export const SECTOR_AVG_PBV: Record<string, number> = {
-  'default': 1.5
+  default: 1.5,
 };
 `;
       fs.writeFileSync('src/lib/stocks-list.ts', fileContent);
-      console.log('Saved', stocks.length, 'stocks!');
+      console.log('Saved', uniqueBySymbol.length, 'stocks!');
     } catch (err) {
       console.log('Error parsing JSON:', err.message);
       console.log('Body start:', body.slice(0, 100));
