@@ -17,13 +17,14 @@ export interface HealthFilters {
 }
 
 export const DEFAULT_FILTERS: HealthFilters = {
-  roe:         { enabled: false, min: 10 },
-  revGrowth:   { enabled: false, min: 5 },
-  niGrowth:    { enabled: false, min: 5 },
-  fcfPositive: { enabled: false },
-  deRatio:     { enabled: false, max: 1.5 },
-  divYield:    { enabled: false, min: 2 },
-  niPositive:  { enabled: false },
+  // Default ON so dashboard immediately displays health-screened stocks.
+  roe:         { enabled: true, min: 8 },
+  revGrowth:   { enabled: true, min: 3 },
+  niGrowth:    { enabled: true, min: 3 },
+  fcfPositive: { enabled: true },
+  deRatio:     { enabled: true, max: 1.5 },
+  divYield:    { enabled: true, min: 1 },
+  niPositive:  { enabled: true },
 };
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -283,6 +284,7 @@ export function HealthFilterPanel({ filters, onChange, resultCount, totalCount }
             <p className="text-[10px] text-slate-600">
               💡 Revenue & Net Income Growth berbasis data YoY (Year-over-Year) dari Yahoo Finance.
               Semua filter diterapkan secara AND (semua kriteria yang aktif harus terpenuhi).
+              Default awal: beberapa filter kesehatan inti sudah aktif otomatis.
             </p>
           </div>
         </div>

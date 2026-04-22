@@ -28,7 +28,7 @@ export function scoringEngine(
 } {
   let totalValueValue = 0;
   let totalWeight = 0;
-  let totalRawConfidence = 0;
+  let totalWeightedConfidence = 0;
   let validMethods = 0;
   const methodValues: { name: string; value: number; weight: number }[] = [];
 
@@ -38,8 +38,8 @@ export function scoringEngine(
   
   methods.forEach((m, idx) => {
     // Soft confidence weighting
-    // Hard cutoff if confidence < 0.2
-    if (m.value !== null && m.confidence >= 0.2 && m.weight > 0) {
+    // Hard cutoff if confidence < configured threshold
+    if (m.value !== null && m.confidence >= ValuationConfig.CONFIDENCE_THRESHOLD && m.weight > 0) {
       validMethodItems.push({ index: idx, value: m.value, weight: m.weight, confidence: m.confidence });
     }
   });
@@ -64,7 +64,7 @@ export function scoringEngine(
 
   validMethodItems.forEach((m) => {
     // Outlier Control Cap
-    const cappedValue = Math.min(m.value, outlierCap);
+    const cappedValue = Math.min(m.value, outlierCap, price * 4);
 
     // effective_weight = base_weight * (confidence ^ 1.5)
     const confidenceMultiplier = Math.pow(m.confidence, ValuationConfig.CONFIDENCE_DECAY_EXPONENT);
@@ -72,7 +72,7 @@ export function scoringEngine(
     
     totalValueValue += cappedValue * effectiveWeight;
     totalWeight += effectiveWeight;
-    totalRawConfidence += m.confidence;
+    totalWeightedConfidence += m.confidence * effectiveWeight;
     validMethods++;
     methodValues.push({ name: names[m.index], value: cappedValue, weight: m.weight });
   });
@@ -90,7 +90,7 @@ export function scoringEngine(
   }
 
   const intrinsicValue = totalValueValue / totalWeight;
-  const confidenceScore = totalRawConfidence / validMethods;
+  const confidenceScore = totalWeight > 0 ? (totalWeightedConfidence / totalWeight) : 0;
   const mos = intrinsicValue > 0 ? (intrinsicValue - price) / intrinsicValue : null;
   const mosNormalized = mos ? normalizeMOS(mos) : 0;
   const qualityScore = piotroskiScore !== null ? piotroskiScore / 9 : 0.5;

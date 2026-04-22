@@ -9,6 +9,28 @@ import { StockData } from '@/types/stock';
 import { TrendingUp, BarChart2, CheckSquare, Activity, RefreshCw } from 'lucide-react';
 import { applyDynamicThresholds } from '@/lib/engines/decisionEngine';
 
+type DistSummary = {
+  count: number;
+  p50: number;
+  p90: number;
+  p99: number;
+  max: number;
+};
+
+type ScreeningStats = {
+  processed: number;
+  success: number;
+  failed: number;
+  successRate: number;
+  upside: {
+    meanReversion: DistSummary;
+    graham: DistSummary;
+    dcf: DistSummary;
+    dividendYield: DistSummary;
+    mos: DistSummary;
+  };
+};
+
 function DashboardStats({ stocks }: { stocks: StockData[] }) {
   const strongBuys = stocks.filter((s) => s.valuation.recommendation === 'Strong Buy').length;
   const buys = stocks.filter((s) => s.valuation.recommendation === 'Buy').length;
@@ -93,6 +115,7 @@ export default function DashboardPage() {
   const [loaded, setLoaded] = useState(0);
   const [targetBatchCount, setTargetBatchCount] = useState(0);
   const [error, setError] = useState(false);
+  const [screeningStats, setScreeningStats] = useState<ScreeningStats | null>(null);
   const [healthFilters, setHealthFilters] = useState<HealthFilters>(DEFAULT_FILTERS);
   
   const [page, setPage] = useState(1);
@@ -107,6 +130,7 @@ export default function DashboardPage() {
     if (!isLoadMore) {
       setStocks([]);
       setLoaded(0);
+      setScreeningStats(null);
       setPage(1);
       setHasMore(true);
     }
@@ -155,6 +179,8 @@ export default function DashboardPage() {
                 const updated = [...prev, msg.data];
                 return updated;
               });
+            } else if (msg.type === 'stats') {
+              setScreeningStats(msg.data as ScreeningStats);
             }
           } catch {
             // ignore parse errors for incomplete chunks
@@ -297,6 +323,44 @@ export default function DashboardPage() {
 
       {/* Stats — always based on full loaded list, not filtered */}
       <DashboardStats stocks={stocks} />
+
+      {screeningStats && (
+        <div className="glass-card p-4 mb-6">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <p className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+              Robustness Audit (Realtime)
+            </p>
+            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+              Success {screeningStats.success}/{screeningStats.processed} ({(screeningStats.successRate * 100).toFixed(1)}%) · Fail {screeningStats.failed}
+            </p>
+          </div>
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
+            {[
+              ['MOS', screeningStats.upside.mos],
+              ['DCF', screeningStats.upside.dcf],
+              ['Graham', screeningStats.upside.graham],
+              ['MeanRev', screeningStats.upside.meanReversion],
+              ['DivYield', screeningStats.upside.dividendYield],
+            ].map(([label, dist]) => {
+              const d = dist as DistSummary;
+              return (
+                <div key={label} className="rounded-lg p-3" style={{ background: 'rgba(99, 120, 175, 0.08)', border: '1px solid var(--border)' }}>
+                  <p className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
+                    {label}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    p50 {(d.p50 * 100).toFixed(1)}% · p90 {(d.p90 * 100).toFixed(1)}%
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                    p99 {(d.p99 * 100).toFixed(1)}% · max {(d.max * 100).toFixed(1)}%
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Health Filter Panel */}
       <HealthFilterPanel

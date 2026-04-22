@@ -8,6 +8,30 @@ export const dynamic = 'force-dynamic';
 
 const BATCH_SIZE = 3; // Smaller batches = less rate limiting
 
+function percentile(sorted: number[], p: number): number {
+  if (sorted.length === 0) return 0;
+  const idx = (sorted.length - 1) * p;
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  const w = idx - lo;
+  return sorted[lo] * (1 - w) + sorted[hi] * w;
+}
+
+function summarizeUpside(values: number[]) {
+  if (values.length === 0) {
+    return { count: 0, p50: 0, p90: 0, p99: 0, max: 0 };
+  }
+  const sorted = [...values].sort((a, b) => a - b);
+  return {
+    count: sorted.length,
+    p50: percentile(sorted, 0.50),
+    p90: percentile(sorted, 0.90),
+    p99: percentile(sorted, 0.99),
+    max: sorted[sorted.length - 1],
+  };
+}
+
 async function fetchWithRetry(symbol: string, name: string, sector: string) {
   let financials = await fetchStockFinancials(symbol, name, sector);
   if (financials) return financials;
@@ -40,6 +64,23 @@ export async function GET(request: Request) {
       // Send meta information
       send({ type: 'meta', total: IDX_STOCKS.length, returned: targetStocks.length });
 
+      let successCount = 0;
+      let failedCount = 0;
+      const upsideBuckets: Record<string, number[]> = {
+        meanReversion: [],
+        graham: [],
+        dcf: [],
+        dividendYield: [],
+        mos: [],
+      };
+
+      const collectUpside = (key: string, value: number | null) => {
+        if (typeof value !== 'number' || !isFinite(value)) return;
+        if (value < -1) return;
+        if (value > 3) return;
+        upsideBuckets[key].push(value);
+      };
+
       // Process in small batches
       for (let i = 0; i < targetStocks.length; i += BATCH_SIZE) {
         const batch = targetStocks.slice(i, i + BATCH_SIZE);
@@ -56,7 +97,15 @@ export async function GET(request: Request) {
 
         for (const result of batchResults) {
           if (result.status === 'fulfilled' && result.value) {
+            successCount++;
+            collectUpside('meanReversion', result.value.valuation.meanReversion.upside);
+            collectUpside('graham', result.value.valuation.graham.upside);
+            collectUpside('dcf', result.value.valuation.dcf.upside);
+            collectUpside('dividendYield', result.value.valuation.dividendYield.upside);
+            collectUpside('mos', result.value.valuation.mos);
             send({ type: 'stock', data: result.value });
+          } else {
+            failedCount++;
           }
         }
 
@@ -65,6 +114,23 @@ export async function GET(request: Request) {
           await new Promise((r) => setTimeout(r, 400));
         }
       }
+
+      send({
+        type: 'stats',
+        data: {
+          processed: targetStocks.length,
+          success: successCount,
+          failed: failedCount,
+          successRate: targetStocks.length > 0 ? successCount / targetStocks.length : 0,
+          upside: {
+            meanReversion: summarizeUpside(upsideBuckets.meanReversion),
+            graham: summarizeUpside(upsideBuckets.graham),
+            dcf: summarizeUpside(upsideBuckets.dcf),
+            dividendYield: summarizeUpside(upsideBuckets.dividendYield),
+            mos: summarizeUpside(upsideBuckets.mos),
+          },
+        },
+      });
 
       send({ type: 'done' });
       controller.close();

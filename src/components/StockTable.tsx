@@ -24,7 +24,7 @@ function SortIcon({ field, currentField, currentOrder }: {
     : <ChevronDown size={12} style={{ color: '#60a5fa' }} />;
 }
 
-function SignalCell({ label, cat, upside }: { label: string, cat: ValuationVal, upside: number | null }) {
+function SignalCell({ label, cat, upside, confidence }: { label: string, cat: ValuationVal, upside: number | null, confidence: number }) {
   if (cat === 'INSUFFICIENT_DATA') {
     return <span className="text-[10px] text-slate-500">—</span>;
   }
@@ -42,7 +42,7 @@ function SignalCell({ label, cat, upside }: { label: string, cat: ValuationVal, 
       )}>
         {isGreen ? 'Undervalued' : isYellow ? 'Fair Value' : 'Overvalued'}
       </span>
-      {upside !== null && (
+      {upside !== null && confidence >= 0.3 && (
         <span className={clsx(
           "text-xs font-mono font-bold mt-0.5",
           upside > 0 ? "text-green-400" : "text-red-400"
@@ -271,22 +271,22 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
 
                     {/* Graham */}
                     <div className="text-right">
-                      <SignalCell label="Graham" cat={valuation.graham.category} upside={valuation.graham.upside} />
+                       <SignalCell label="Graham" cat={valuation.graham.category} upside={valuation.graham.upside} confidence={valuation.graham.confidence} />
                     </div>
 
                     {/* DCF */}
                     <div className="text-right">
-                       <SignalCell label="DCF" cat={valuation.dcf.category} upside={valuation.dcf.upside} />
+                        <SignalCell label="DCF" cat={valuation.dcf.category} upside={valuation.dcf.upside} confidence={valuation.dcf.confidence} />
                     </div>
 
                     {/* MeanReversion */}
                     <div className="text-right">
-                       <SignalCell label="MeanRev" cat={valuation.meanReversion.category} upside={valuation.meanReversion.upside} />
+                        <SignalCell label="MeanRev" cat={valuation.meanReversion.category} upside={valuation.meanReversion.upside} confidence={valuation.meanReversion.confidence} />
                     </div>
 
                     {/* Dividend Yield */}
                     <div className="text-right">
-                       <SignalCell label="DivYield" cat={valuation.dividendYield.category} upside={valuation.dividendYield.upside} />
+                        <SignalCell label="DivYield" cat={valuation.dividendYield.category} upside={valuation.dividendYield.upside} confidence={valuation.dividendYield.confidence} />
                     </div>
 
                   </Link>

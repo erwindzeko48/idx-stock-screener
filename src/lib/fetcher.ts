@@ -13,6 +13,37 @@ function safeNum(val: any): number | null {
   return isFinite(n) && !isNaN(n) ? n : null;
 }
 
+function medianNum(values: number[]): number | null {
+  if (values.length === 0) return null;
+  const arr = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(arr.length / 2);
+  return arr.length % 2 === 0 ? (arr[mid - 1] + arr[mid]) / 2 : arr[mid];
+}
+
+function normalizeSector(raw: string | null | undefined): string {
+  const s = String(raw || '').trim();
+  if (!s) return 'default';
+
+  const l = s.toLowerCase();
+  if (l.includes('bank') || l.includes('financial')) return 'Banking';
+  if (l.includes('telecom') || l.includes('communication')) return 'Telecommunications';
+  if (l.includes('consumer defensive') || l.includes('consumer staples')) return 'Consumer Staples';
+  if (l.includes('consumer cyclical') || l.includes('automotive')) return 'Automotive';
+  if (l.includes('health')) return 'Healthcare';
+  if (l.includes('energy') || l.includes('oil') || l.includes('gas')) return 'Energy';
+  if (l.includes('mining') || l.includes('coal')) return 'Mining';
+  if (l.includes('basic materials') || l.includes('materials') || l.includes('chemical')) return 'Materials';
+  if (l.includes('real estate') || l.includes('property')) return 'Property';
+  if (l.includes('industrial') || l.includes('infrastructure') || l.includes('utility')) return 'Infrastructure';
+  if (l.includes('technology') || l.includes('software') || l.includes('internet')) return 'Technology';
+  if (l.includes('agri') || l.includes('farm') || l.includes('plantation')) return 'Agriculture';
+  if (l.includes('metal') || l.includes('steel')) return 'Metals';
+  if (l.includes('retail')) return 'Retail';
+  if (l.includes('media') || l.includes('entertainment')) return 'Media';
+  if (l.includes('transport') || l.includes('logistics')) return 'Transportation';
+  return 'default';
+}
+
 export async function fetchStockFinancials(
   symbol: string,
   name: string,
@@ -34,7 +65,7 @@ export async function fetchStockFinancials(
 
     try {
       s = await yf.quoteSummary(symbol, {
-        modules: ['financialData', 'defaultKeyStatistics', 'summaryDetail'],
+        modules: ['financialData', 'defaultKeyStatistics', 'summaryDetail', 'summaryProfile'],
       });
     } catch {
       // quoteSummary may partially fail
@@ -63,6 +94,9 @@ export async function fetchStockFinancials(
     const fd = s?.financialData ?? {};
     const ks = s?.defaultKeyStatistics ?? {};
     const sd = s?.summaryDetail ?? {};
+    const sp = s?.summaryProfile ?? {};
+    const yahooSector = normalizeSector(sp?.sector);
+    const resolvedSector = yahooSector !== 'default' ? yahooSector : normalizeSector(sector);
 
     const getTS = (key: string, index: number = 0) => {
       if (!ts || ts.length <= index) return null;
@@ -244,15 +278,15 @@ export async function fetchStockFinancials(
         if (tsNetIncome && tsNetIncome > 0 && sharesOutstanding && sharesOutstanding > 0 && eps && eps > 0 && pe && pe > 0) {
           const tsEPS = tsNetIncome / sharesOutstanding;
           const implied = pe * (eps / tsEPS);
-          if (implied > 0 && implied < 100) peReadings.push(implied);
+          if (implied > 0 && implied < 60) peReadings.push(implied);
         }
       }
 
       if (peReadings.length >= 2) {
-        const avg = peReadings.reduce((a, b) => a + b, 0) / peReadings.length;
-        return Math.min(Math.max(avg, 4), 80);
+        const med = medianNum(peReadings);
+        if (med !== null) return Math.min(Math.max(med, 4), 35);
       }
-      if (pe && pe > 0 && pe < 80) return pe;
+      if (pe && pe > 0 && pe < 35) return pe;
       return null;
     })();
 
@@ -266,7 +300,9 @@ export async function fetchStockFinancials(
       const fromQuote = safeNum(q?.dividendYield);
       if (fromQuote !== null && fromQuote > 0) return fromQuote / 100; // pct → decimal
       const fromSD = safeNum(sd?.dividendYield);
-      if (fromSD !== null && fromSD > 0) return fromSD; // already decimal
+      if (fromSD !== null && fromSD > 0) {
+        return fromSD > 1 ? fromSD / 100 : fromSD;
+      }
       return null;
     })();
 
@@ -305,7 +341,11 @@ export async function fetchStockFinancials(
       return null;
     })();
 
-    const payoutRatio = safeNum(sd?.payoutRatio);
+    const payoutRatio = (() => {
+      const pr = safeNum(sd?.payoutRatio);
+      if (pr === null || pr < 0) return null;
+      return pr > 1 ? pr / 100 : pr;
+    })();
 
     // ── Derived ratios ────────────────────────────────────────────────────────
     const debtToEquity: number | null =
@@ -359,7 +399,7 @@ export async function fetchStockFinancials(
     return {
       symbol,
       name: q?.longName ?? q?.shortName ?? name,
-      sector,
+      sector: resolvedSector,
       currentPrice,
       marketCap,
       pe,
