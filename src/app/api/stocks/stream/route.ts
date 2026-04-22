@@ -3,6 +3,7 @@ import { fetchStockFinancials } from '@/lib/fetcher';
 import { valuateStock } from '@/lib/valuation';
 import { StockData } from '@/types/stock';
 import { detectMarketRegime } from '@/lib/engines/marketRegimeEngine';
+import { buildDataQualityReport } from '@/lib/engines/dataQualityEngine';
 
 export const dynamic = 'force-dynamic';
 
@@ -73,6 +74,11 @@ export async function GET(request: Request) {
         dividendYield: [],
         mos: [],
       };
+      const qualityBuckets = {
+        high: 0,
+        missing: 0,
+        inconsistent: 0,
+      };
 
       const collectUpside = (key: string, value: number | null) => {
         if (typeof value !== 'number' || !isFinite(value)) return;
@@ -90,6 +96,11 @@ export async function GET(request: Request) {
             const financials = await fetchWithRetry(symbol, name, sector);
             if (!financials) return null;
             const valuation = valuateStock(financials, marketRegime);
+            const dataQuality = await buildDataQualityReport(financials);
+            valuation.data_quality = dataQuality;
+            if (dataQuality.flag !== 'HIGH_CONFIDENCE') {
+              valuation.warnings.push(`Data quality: ${dataQuality.flag}`);
+            }
             // No health check needed since Piotroski serves as health check inside valuation
             return { financials, valuation } as StockData;
           })
@@ -103,6 +114,12 @@ export async function GET(request: Request) {
             collectUpside('dcf', result.value.valuation.dcf.upside);
             collectUpside('dividendYield', result.value.valuation.dividendYield.upside);
             collectUpside('mos', result.value.valuation.mos);
+
+            const qualityFlag = result.value.valuation.data_quality?.flag;
+            if (qualityFlag === 'HIGH_CONFIDENCE') qualityBuckets.high += 1;
+            if (qualityFlag === 'MISSING_DATA') qualityBuckets.missing += 1;
+            if (qualityFlag === 'INCONSISTENT_DATA') qualityBuckets.inconsistent += 1;
+
             send({ type: 'stock', data: result.value });
           } else {
             failedCount++;
@@ -129,6 +146,7 @@ export async function GET(request: Request) {
             dividendYield: summarizeUpside(upsideBuckets.dividendYield),
             mos: summarizeUpside(upsideBuckets.mos),
           },
+          dataQuality: qualityBuckets,
         },
       });
 

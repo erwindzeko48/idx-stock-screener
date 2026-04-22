@@ -117,6 +117,13 @@ export function ValuationBreakdown({ valuation, currentPrice }: Props) {
   const confText = valuation.confidence >= 0.7 ? 'High Confidence' : valuation.confidence >= 0.4 ? 'Medium Confidence' : 'Low Confidence';
   const confColor = valuation.confidence >= 0.7 ? 'text-blue-400 border-blue-400/30 bg-blue-400/10' : valuation.confidence >= 0.4 ? 'text-amber-400 border-amber-400/30 bg-amber-400/10' : 'text-slate-400 border-slate-400/30 bg-slate-400/10';
 
+  const contributionSorted = [...valuation.explainability.contributions].sort((a, b) => b.contributionPct - a.contributionPct);
+  const maxWaterfall = Math.max(
+    currentPrice,
+    ...valuation.explainability.waterfall.map((w) => w.value),
+    1,
+  );
+
   return (
     <div className="space-y-6">
       
@@ -270,6 +277,158 @@ export function ValuationBreakdown({ valuation, currentPrice }: Props) {
                </div>
              ))}
            </div>
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="glass-card p-5">
+          <SectionHeading icon={BarChart3} title="Explainability Layer" desc="Kontribusi tiap model terhadap intrinsic value final dan detail confidence." />
+
+          <div className="space-y-3">
+            {contributionSorted.map((c) => (
+              <div key={c.method}>
+                <div className="flex items-center justify-between text-xs mb-1">
+                  <span className="text-slate-300 font-semibold">{c.method.replaceAll('_', ' ')}</span>
+                  <span className="text-slate-400">{c.contributionPct.toFixed(1)}%</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div className="h-full bg-blue-500" style={{ width: `${Math.max(2, c.contributionPct)}%` }} />
+                </div>
+                <p className="text-[10px] text-slate-500 mt-1">
+                  confidence {(c.confidence * 100).toFixed(0)}% · signal {c.signal}
+                </p>
+              </div>
+            ))}
+          </div>
+
+          <div className="mt-4 pt-4 border-t border-slate-800 space-y-1">
+            <p className="text-xs text-slate-400">
+              Composite confidence: <span className="font-mono text-slate-200">{(valuation.explainability.confidenceDetail.compositeConfidence * 100).toFixed(1)}%</span>
+            </p>
+            <p className="text-xs text-slate-400">
+              Model coverage: <span className="font-mono text-slate-200">{(valuation.explainability.confidenceDetail.modelCoverage * 100).toFixed(1)}%</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="glass-card p-5">
+          <SectionHeading icon={ShieldCheck} title="Advanced Risk Layer" desc="Skor risiko 0-100, cyclicality, dan potensi value trap." />
+
+          <div className="grid grid-cols-2 gap-3 mb-4">
+            <div className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/40">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Risk Score</p>
+              <p className="text-2xl font-black font-mono text-red-300">{valuation.risk_profile.riskScore}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/40">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500 mb-1">Cyclicality</p>
+              <p className="text-sm font-bold text-slate-200">{valuation.risk_profile.cyclicalityClass}</p>
+              <p className="text-xs text-slate-500">{valuation.risk_profile.cyclicalityScore}/100</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-400 mb-2">
+            Earnings consistency: <span className="font-mono text-slate-200">{valuation.risk_profile.earningsConsistencyScore}</span>
+          </p>
+          <p className="text-xs text-slate-400 mb-3">
+            Industry tags: {valuation.risk_profile.industryRiskTags.join(', ') || 'N/A'}
+          </p>
+
+          <div className="space-y-2">
+            {valuation.risk_profile.flags.length === 0 && (
+              <p className="text-xs text-green-300">Tidak ada red flag mayor dari advanced risk layer.</p>
+            )}
+            {valuation.risk_profile.flags.map((f, idx) => (
+              <div key={`${f}-${idx}`} className="text-xs rounded-lg border border-red-500/20 bg-red-500/10 text-red-200 px-3 py-2">
+                {f}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <div className="glass-card p-5">
+          <SectionHeading icon={Layers} title="Intrinsic Waterfall" desc="Perbandingan harga saat ini versus output tiap model." />
+          <div className="space-y-2">
+            {valuation.explainability.waterfall.map((w) => {
+              const width = Math.max(4, (w.value / maxWaterfall) * 100);
+              return (
+                <div key={w.label}>
+                  <div className="flex justify-between text-xs mb-1">
+                    <span className="text-slate-300">{w.label}</span>
+                    <span className="font-mono text-slate-400">{Math.round(w.value).toLocaleString('id-ID')}</span>
+                  </div>
+                  <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                    <div className="h-full bg-indigo-500" style={{ width: `${width}%` }} />
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="glass-card p-5">
+          <SectionHeading icon={Target} title="Sensitivity Analysis" desc="Range nilai intrinsik berdasarkan skenario growth, WACC, dan margin." />
+          <div className="grid grid-cols-3 gap-2 mb-3">
+            <div className="rounded-lg border border-slate-700/40 p-2 bg-slate-900/40">
+              <p className="text-[10px] text-slate-500 uppercase">Bear</p>
+              <p className="text-sm font-mono text-red-300">{valuation.sensitivity.scenarios.bearish ? Math.round(valuation.sensitivity.scenarios.bearish).toLocaleString('id-ID') : 'N/A'}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/40 p-2 bg-slate-900/40">
+              <p className="text-[10px] text-slate-500 uppercase">Neutral</p>
+              <p className="text-sm font-mono text-slate-200">{valuation.sensitivity.scenarios.neutral ? Math.round(valuation.sensitivity.scenarios.neutral).toLocaleString('id-ID') : 'N/A'}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/40 p-2 bg-slate-900/40">
+              <p className="text-[10px] text-slate-500 uppercase">Bull</p>
+              <p className="text-sm font-mono text-green-300">{valuation.sensitivity.scenarios.bullish ? Math.round(valuation.sensitivity.scenarios.bullish).toLocaleString('id-ID') : 'N/A'}</p>
+            </div>
+          </div>
+
+          <p className="text-xs text-slate-400 mb-2">
+            Value range: {valuation.sensitivity.valueRange.min ? Math.round(valuation.sensitivity.valueRange.min).toLocaleString('id-ID') : 'N/A'} - {valuation.sensitivity.valueRange.max ? Math.round(valuation.sensitivity.valueRange.max).toLocaleString('id-ID') : 'N/A'}
+          </p>
+
+          <div className="space-y-2">
+            {valuation.sensitivity.tornado.map((t) => (
+              <div key={t.name}>
+                <div className="flex justify-between text-xs mb-1">
+                  <span className="text-slate-300">{t.name}</span>
+                  <span className="font-mono text-slate-400">{Math.round(t.intrinsicValue).toLocaleString('id-ID')}</span>
+                </div>
+                <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+                  <div
+                    className="h-full bg-amber-500"
+                    style={{ width: `${Math.min(100, Math.max(5, valuation.sensitivity.baseValue ? (t.intrinsicValue / valuation.sensitivity.baseValue) * 100 : 5))}%` }}
+                  />
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {valuation.data_quality && (
+        <div className="glass-card p-5">
+          <SectionHeading icon={Info} title="Data Quality Validation" desc="Multi-source check, completeness score, dan konsistensi data." />
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-3">
+            <div className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/40">
+              <p className="text-[10px] uppercase text-slate-500">Completeness</p>
+              <p className="text-lg font-black font-mono text-slate-200">{valuation.data_quality.dataCompletenessScore}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/40">
+              <p className="text-[10px] uppercase text-slate-500">Confidence</p>
+              <p className="text-lg font-black font-mono text-blue-300">{valuation.data_quality.confidenceScore}</p>
+            </div>
+            <div className="rounded-lg border border-slate-700/40 p-3 bg-slate-900/40">
+              <p className="text-[10px] uppercase text-slate-500">Flag</p>
+              <p className="text-xs font-bold text-slate-200 mt-1">{valuation.data_quality.flag}</p>
+            </div>
+          </div>
+          <div className="space-y-1">
+            {valuation.data_quality.warnings.map((w, i) => (
+              <p key={`${w}-${i}`} className="text-xs text-slate-400">• {w}</p>
+            ))}
+          </div>
         </div>
       )}
 

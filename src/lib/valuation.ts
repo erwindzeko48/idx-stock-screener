@@ -7,6 +7,9 @@ import { MarketRegime } from './engines/marketRegimeEngine';
 import { stabilityEngine } from './engines/stabilityEngine';
 import { momentumEngine } from './engines/momentumEngine';
 import { ValuationConfig } from './valuation-config';
+import { buildExplainability } from './engines/explainabilityEngine';
+import { buildAdvancedRiskProfile } from './engines/advancedRiskEngine';
+import { buildSensitivityAnalysis } from './engines/sensitivityEngine';
 import {
   calculatePiotroski,
   calculateMeanReversion,
@@ -34,6 +37,7 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
 
   // 4. Risk Engine
   const { riskScore, warnings } = riskEngine(f, piotroski.score);
+  const riskProfile = buildAdvancedRiskProfile(f, piotroski.score, riskScore);
 
   // 5. Valuation Models 
   const meanReversion = calculateMeanReversion(f, baseWeights.pe);
@@ -45,6 +49,8 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
 
   // 6. Composite Scoring Engine
   const scoreResult = scoringEngine(f.currentPrice, methodArray, piotroski.score, riskScore, stabilityScore, marketRegime);
+  const explainability = buildExplainability(f.currentPrice, methodArray, scoreResult.confidenceScore);
+  const sensitivity = buildSensitivityAnalysis(f);
 
   // 7. Factor Exposure Tracking
   const valueEx = f.pe && f.pe > 0 ? Math.max(0, 1 - (f.pe / 30)) : 0.5; // proxy
@@ -80,6 +86,10 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
 
   if (scoreResult.finalScore <= 0.5 && riskScore > 0.8) {
     explanation.push('Final Score capped severely due to Risk Escalation Rule (Risk > 0.8).');
+  }
+
+  if (riskProfile.flags.length > 0) {
+    explanation.push('Advanced risk layer triggered additional caution flags.');
   }
 
   if (marketRegime === 'BULL') {
@@ -118,6 +128,10 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
       value: valueEx,
       growth: growthEx,
       quality: qualityEx,
-    }
+    },
+    explainability,
+    risk_profile: riskProfile,
+    sensitivity,
+    data_quality: null,
   };
 }

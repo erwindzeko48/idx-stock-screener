@@ -230,14 +230,26 @@ export function StockTable({ stocks, loadingMore, onLoadMore, hasMore }: Props) 
                          <div className="flex items-center gap-1">
                            <span className={clsx(
                              "text-[10px] font-mono",
-                             valuation.risk > 0.5 ? "text-red-400" : "text-slate-500"
+                             valuation.risk_profile.riskScore > 60 ? "text-red-400" : "text-slate-500"
                            )}>
-                             Risiko: {(valuation.risk * 100).toFixed(0)}
+                             Risiko: {valuation.risk_profile.riskScore}
                            </span>
                            <span className="text-slate-700">•</span>
                            <p className="text-[10px] text-slate-500 truncate" title={financials.name}>
                              {financials.name.length > 15 ? financials.name.substring(0, 15) + '...' : financials.name}
                            </p>
+                         </div>
+                         <div className="flex items-center gap-1 mt-0.5">
+                           {valuation.risk_profile.flags.length > 0 && (
+                             <span className="text-[9px] px-1 rounded bg-red-500/15 text-red-300 border border-red-500/20">
+                               {valuation.risk_profile.flags[0].replace('⚠️ ', '')}
+                             </span>
+                           )}
+                           {valuation.data_quality?.flag && valuation.data_quality.flag !== 'HIGH_CONFIDENCE' && (
+                             <span className="text-[9px] px-1 rounded bg-amber-500/15 text-amber-300 border border-amber-500/20">
+                               {valuation.data_quality.flag}
+                             </span>
+                           )}
                          </div>
                        </div>
                     </div>

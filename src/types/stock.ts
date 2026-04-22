@@ -76,6 +76,78 @@ export interface MethodResult {
   reasoning: string;
 }
 
+export interface MethodContribution {
+  method: 'DCF' | 'GRAHAM' | 'MEAN_REVERSION' | 'DIVIDEND_YIELD';
+  contributionPct: number;
+  effectiveWeight: number;
+  intrinsicValue: number | null;
+  confidence: number;
+  signal: ValuationVal;
+}
+
+export interface ConfidenceBreakdown {
+  compositeConfidence: number;
+  modelCoverage: number;
+  methodConfidence: {
+    method: MethodContribution['method'];
+    confidence: number;
+    passedThreshold: boolean;
+  }[];
+}
+
+export interface WaterfallStep {
+  label: string;
+  value: number;
+}
+
+export interface ValuationExplainability {
+  contributions: MethodContribution[];
+  confidenceDetail: ConfidenceBreakdown;
+  reasoning: string[];
+  waterfall: WaterfallStep[];
+}
+
+export interface RiskProfile {
+  riskScore: number; // 0..100
+  cyclicalityScore: number; // 0..100
+  cyclicalityClass: 'DEFENSIVE' | 'CYCLICAL' | 'HIGHLY_CYCLICAL';
+  industryRiskTags: string[];
+  earningsStabilityStdDev: number;
+  earningsConsistencyScore: number; // 0..100
+  flags: string[];
+}
+
+export interface SensitivityPoint {
+  name: string;
+  intrinsicValue: number;
+}
+
+export interface SensitivityResult {
+  baseValue: number | null;
+  valueRange: {
+    min: number | null;
+    max: number | null;
+  };
+  scenarios: {
+    bullish: number | null;
+    neutral: number | null;
+    bearish: number | null;
+  };
+  tornado: SensitivityPoint[];
+}
+
+export interface DataQualityReport {
+  sourceChecks: {
+    yahoo: boolean;
+    alternativeSource: boolean;
+    priceConsistencyDiffPct: number | null;
+  };
+  dataCompletenessScore: number; // 0..100
+  confidenceScore: number; // 0..100
+  flag: 'HIGH_CONFIDENCE' | 'MISSING_DATA' | 'INCONSISTENT_DATA';
+  warnings: string[];
+}
+
 export interface PiotroskiResult {
   score: number | null;
   category: ValuationVal; // 7-9: UNDERVALUED, 4-6: FAIR_VALUE, 0-3: OVERVALUED
@@ -123,6 +195,11 @@ export interface ValuationResult {
     growth: number;              // 0 to 1
     quality: number;             // 0 to 1
   };
+
+  explainability: ValuationExplainability;
+  risk_profile: RiskProfile;
+  sensitivity: SensitivityResult;
+  data_quality: DataQualityReport | null;
 
   // Summary fields (legacy but kept for sorting if needed)
   passingMethodsCount: number; // 0 to 5
@@ -177,6 +254,48 @@ export interface BacktestResult {
     graham: BacktestMethodResult;
     dcf: BacktestMethodResult;
   };
+}
+
+export interface BacktestPoint {
+  date: string;
+  strategy: number;
+  benchmark: number;
+  drawdown: number;
+}
+
+export interface BacktestPerformanceSummary {
+  cagr: number;
+  sharpe: number;
+  maxDrawdown: number;
+  winRate: number;
+  alphaVsBenchmark: number;
+}
+
+export interface RollingBacktestWindowResult {
+  windowLabel: string;
+  trainStart: string;
+  trainEnd: string;
+  testStart: string;
+  testEnd: string;
+  rebalancing: 'MONTHLY' | 'QUARTERLY';
+  selectedTopN: number;
+  universeSize: number;
+  equityCurve: BacktestPoint[];
+  summary: BacktestPerformanceSummary;
+}
+
+export interface PortfolioBacktestResponse {
+  benchmark: {
+    symbol: string;
+    name: string;
+  };
+  survivorshipMitigation: {
+    usedSymbols: number;
+    delistedCandidates: string[];
+    unavailableSymbols: string[];
+  };
+  windows: RollingBacktestWindowResult[];
+  aggregate: BacktestPerformanceSummary;
 }
 
 export type SortField = 'passingCount' | 'finalScore' | 'piotroski' | 'dcfUpside' | 'grahamUpside' | 'name';

@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { fetchStockFinancials, fetchPriceHistory } from '@/lib/fetcher';
 import { valuateStock } from '@/lib/valuation';
 import { IDX_STOCKS } from '@/lib/stocks-list';
+import { buildDataQualityReport } from '@/lib/engines/dataQualityEngine';
 
 export const revalidate = 3600;
 
@@ -28,6 +29,12 @@ export async function GET(
   }
 
   const valuation = valuateStock(financials);
+  const dataQuality = await buildDataQualityReport(financials);
+
+  valuation.data_quality = dataQuality;
+  if (dataQuality.flag !== 'HIGH_CONFIDENCE') {
+    valuation.warnings.push(`Data quality: ${dataQuality.flag}`);
+  }
 
   return NextResponse.json(
     { financials, valuation, priceHistory },

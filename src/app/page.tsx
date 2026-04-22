@@ -29,6 +29,11 @@ type ScreeningStats = {
     dividendYield: DistSummary;
     mos: DistSummary;
   };
+  dataQuality?: {
+    high: number;
+    missing: number;
+    inconsistent: number;
+  };
 };
 
 function DashboardStats({ stocks }: { stocks: StockData[] }) {
@@ -335,15 +340,21 @@ export default function DashboardPage() {
             </p>
           </div>
 
+          {screeningStats.dataQuality && (
+            <p className="text-xs mb-3" style={{ color: 'var(--text-muted)' }}>
+              Data quality: ✅ {screeningStats.dataQuality.high} · ⚠️ {screeningStats.dataQuality.missing} · ❌ {screeningStats.dataQuality.inconsistent}
+            </p>
+          )}
+
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-2">
             {[
-              ['MOS', screeningStats.upside.mos],
-              ['DCF', screeningStats.upside.dcf],
-              ['Graham', screeningStats.upside.graham],
-              ['MeanRev', screeningStats.upside.meanReversion],
-              ['DivYield', screeningStats.upside.dividendYield],
-            ].map(([label, dist]) => {
-              const d = dist as DistSummary;
+              { label: 'MOS', dist: screeningStats.upside.mos },
+              { label: 'DCF', dist: screeningStats.upside.dcf },
+              { label: 'Graham', dist: screeningStats.upside.graham },
+              { label: 'MeanRev', dist: screeningStats.upside.meanReversion },
+              { label: 'DivYield', dist: screeningStats.upside.dividendYield },
+            ].map(({ label, dist }) => {
+              const d: DistSummary = dist;
               return (
                 <div key={label} className="rounded-lg p-3" style={{ background: 'rgba(99, 120, 175, 0.08)', border: '1px solid var(--border)' }}>
                   <p className="text-[11px] font-semibold uppercase tracking-wider mb-2" style={{ color: 'var(--text-muted)' }}>
