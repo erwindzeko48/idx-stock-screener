@@ -7,6 +7,7 @@ import { PriceChart } from '@/components/PriceChart';
 import { ValuationBreakdown } from '@/components/ValuationBreakdown';
 import { FundamentalMetrics } from '@/components/FundamentalMetrics';
 import { BacktestSection } from '@/components/BacktestSection';
+import { IndicatorInsights } from '@/components/IndicatorInsights';
 import {
   ArrowLeft,
   Building2,
@@ -170,6 +171,9 @@ export default function StockDetailPage() {
               Breakdown 5 Metode Valuasi
             </h2>
             <ValuationBreakdown valuation={valuation} currentPrice={financials.currentPrice} />
+            <div className="mt-6">
+              <IndicatorInsights financials={financials} valuation={valuation} />
+            </div>
             <BacktestSection symbol={financials.symbol} />
           </div>
         </div>

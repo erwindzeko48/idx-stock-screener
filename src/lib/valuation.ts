@@ -10,6 +10,7 @@ import { ValuationConfig } from './valuation-config';
 import { buildExplainability } from './engines/explainabilityEngine';
 import { buildAdvancedRiskProfile } from './engines/advancedRiskEngine';
 import { buildSensitivityAnalysis } from './engines/sensitivityEngine';
+import { applyModelProfileSelection, MethodWeightSet, ModelProfile } from './engines/modelProfileEngine';
 import {
   calculatePiotroski,
   calculateMeanReversion,
@@ -23,10 +24,26 @@ export {
   calculatePiotroski, calculateMeanReversion, calculateGrahamNumber, calculateDividendYieldReversion, calculateDCFModel, stabilityEngine, momentumEngine
 };
 
-export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'SIDEWAYS'): ValuationResult {
+export interface ValuationOptions {
+  modelProfile?: ModelProfile;
+  overrideMethodWeights?: Partial<MethodWeightSet>;
+}
+
+export function valuateStock(
+  f: StockFinancials,
+  marketRegime: MarketRegime = 'SIDEWAYS',
+  options: ValuationOptions = {},
+): ValuationResult {
   // 1. Classification & Weighting
   const stockType = classificationEngine(f);
   const baseWeights = getAdaptiveWeights(stockType);
+  const profile = options.modelProfile ?? 'BALANCED';
+  const profileSelection = applyModelProfileSelection(
+    f,
+    baseWeights,
+    profile,
+    options.overrideMethodWeights,
+  );
 
   // 2. Fundamental Quality
   const piotroski = calculatePiotroski(f);
@@ -40,10 +57,10 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
   const riskProfile = buildAdvancedRiskProfile(f, piotroski.score, riskScore);
 
   // 5. Valuation Models 
-  const meanReversion = calculateMeanReversion(f, baseWeights.pe);
-  const graham = calculateGrahamNumber(f, baseWeights.graham);
-  const dividendYield = calculateDividendYieldReversion(f, baseWeights.div);
-  const dcf = calculateDCFModel(f, baseWeights.dcf);
+  const meanReversion = calculateMeanReversion(f, profileSelection.weights.pe);
+  const graham = calculateGrahamNumber(f, profileSelection.weights.graham);
+  const dividendYield = calculateDividendYieldReversion(f, profileSelection.weights.div);
+  const dcf = calculateDCFModel(f, profileSelection.weights.dcf);
 
   const methodArray = [meanReversion, graham, dividendYield, dcf];
 
@@ -72,6 +89,11 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
     warnings.push('NEGATIVE EQUITY (Delisting Risk)');
   }
 
+  if (profile !== 'FULL' && (piotroski.score ?? 0) <= 3) {
+    recommendation = 'Avoid';
+    explanation.push('Quality gate failed: Piotroski <= 3 in simplified model profile.');
+  }
+
   if (recommendation !== 'Avoid' && scoreResult.confidenceScore < 0.40) {
     if (recommendation === 'Strong Buy') recommendation = 'Buy';
     else if (recommendation === 'Buy') recommendation = 'Hold';
@@ -97,6 +119,8 @@ export function valuateStock(f: StockFinancials, marketRegime: MarketRegime = 'S
   } else if (marketRegime === 'BEAR') {
     explanation.push('Regime: BEAR. Boosted Risk Penalty.');
   }
+
+  explanation.push(...profileSelection.notes);
 
   const passingMethodsCount = methodArray.filter(m => m.category === 'UNDERVALUED').length;
 

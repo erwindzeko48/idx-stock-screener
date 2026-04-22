@@ -8,6 +8,7 @@ import {
   StockFinancials,
 } from '@/types/stock';
 import { valuateStock } from '@/lib/valuation';
+import { MethodWeightSet, ModelProfile } from '@/lib/engines/modelProfileEngine';
 
 type Rebalancing = 'MONTHLY' | 'QUARTERLY';
 
@@ -15,6 +16,8 @@ type EngineOptions = {
   rebalancing: Rebalancing;
   universeSize: number;
   maxWindows: number;
+  modelProfile?: ModelProfile;
+  overrideMethodWeights?: Partial<MethodWeightSet>;
 };
 
 type AssetBundle = {
@@ -406,13 +409,24 @@ function pickTopNByTraining(
   trainStart: Date,
   trainEnd: Date,
   rebalancing: Rebalancing,
+  modelProfile: ModelProfile,
+  overrideMethodWeights?: Partial<MethodWeightSet>,
 ): number {
   const candidates = [5, 8, 12];
   let bestTopN = 8;
   let bestSharpe = Number.NEGATIVE_INFINITY;
 
   for (const topN of candidates) {
-    const sim = simulatePeriod(bundles, benchmarkBundle, trainStart, trainEnd, rebalancing, topN);
+    const sim = simulatePeriod(
+      bundles,
+      benchmarkBundle,
+      trainStart,
+      trainEnd,
+      rebalancing,
+      topN,
+      modelProfile,
+      overrideMethodWeights,
+    );
     if (sim.summary.sharpe > bestSharpe) {
       bestSharpe = sim.summary.sharpe;
       bestTopN = topN;
@@ -429,6 +443,8 @@ function simulatePeriod(
   periodEnd: Date,
   rebalancing: Rebalancing,
   topN: number,
+  modelProfile: ModelProfile,
+  overrideMethodWeights?: Partial<MethodWeightSet>,
 ): { points: BacktestPoint[]; summary: BacktestPerformanceSummary } {
   const schedule = buildRebalanceSchedule(periodStart, periodEnd, rebalancing);
   if (schedule.length < 2) {
@@ -457,7 +473,10 @@ function simulatePeriod(
       .map((bundle) => {
         const snapshot = buildSnapshot(bundle, rebalanceDate);
         if (!snapshot) return null;
-        const valuation = valuateStock(snapshot, 'SIDEWAYS');
+        const valuation = valuateStock(snapshot, 'SIDEWAYS', {
+          modelProfile,
+          overrideMethodWeights,
+        });
         const startPrice = findQuoteAtOrBefore(bundle, rebalanceDate);
         const endPrice = findQuoteAtOrBefore(bundle, nextDate);
         if (!startPrice || !endPrice || startPrice <= 0) return null;
@@ -517,6 +536,7 @@ function aggregateSummary(summaries: BacktestPerformanceSummary[]): BacktestPerf
 }
 
 export async function runRollingBacktest(options: EngineOptions): Promise<PortfolioBacktestResponse> {
+  const modelProfile = options.modelProfile ?? 'BALANCED';
   const now = new Date();
   const earliestNeeded = new Date(Date.UTC(now.getUTCFullYear() - 9, now.getUTCMonth(), 1));
   const fromDate = earliestNeeded.toISOString().slice(0, 10);
@@ -567,8 +587,16 @@ export async function runRollingBacktest(options: EngineOptions): Promise<Portfo
     const trainStart = addYears(trainEnd, -5);
 
     if (trainStart < earliestNeeded) break;
-
-    const selectedTopN = pickTopNByTraining(bundles, benchmarkBundle, trainStart, trainEnd, options.rebalancing);
+    
+    const topNOptimized = pickTopNByTraining(
+      bundles,
+      benchmarkBundle,
+      trainStart,
+      trainEnd,
+      options.rebalancing,
+      modelProfile,
+      options.overrideMethodWeights,
+    );
 
     const simulated = simulatePeriod(
       bundles,
@@ -576,7 +604,9 @@ export async function runRollingBacktest(options: EngineOptions): Promise<Portfo
       testStart,
       cursorTestEnd,
       options.rebalancing,
-      selectedTopN,
+      topNOptimized,
+      modelProfile,
+      options.overrideMethodWeights,
     );
 
     windows.unshift({
@@ -586,7 +616,7 @@ export async function runRollingBacktest(options: EngineOptions): Promise<Portfo
       testStart: testStart.toISOString().slice(0, 10),
       testEnd: cursorTestEnd.toISOString().slice(0, 10),
       rebalancing: options.rebalancing,
-      selectedTopN,
+      selectedTopN: topNOptimized,
       universeSize: bundles.length,
       equityCurve: simulated.points,
       summary: simulated.summary,

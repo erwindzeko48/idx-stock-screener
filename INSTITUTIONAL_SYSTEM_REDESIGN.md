@@ -253,3 +253,88 @@ Bandingkan stabilitas alpha dan drawdown.
 
 3. Investor communication:
 - Gunakan panel explainability + risk flags sebagai bahan komite investasi.
+
+## 8. Method Optimization Framework (New)
+
+Tujuan section ini adalah memastikan sistem tidak jatuh ke jebakan: semakin banyak model semakin terlihat canggih, tetapi alpha tidak bertambah.
+
+### 8.1 Signal Decomposition
+
+Mapping kategori sinyal:
+- Intrinsic Value: DCF, Graham
+- Relative Valuation: Mean Reversion PE
+- Income Signal: Dividend Yield
+- Quality Signal: Piotroski
+
+Overlap utama yang harus diawasi:
+- DCF vs Graham (sama-sama earnings anchored)
+- DCF vs Mean Reversion (sama-sama sensitif pada normalisasi EPS)
+- Graham vs Dividend Yield (pada saham mature, sinyal bisa tumpang tindih)
+
+### 8.2 Redundancy Analysis
+
+Sistem sekarang memiliki endpoint analisis otomatis:
+- GET /api/model-optimization
+
+Endpoint ini menghitung:
+- correlation matrix antar sinyal
+- highly correlated pairs (|corr| >= 0.7)
+- weak signals (coverage rendah / information coefficient lemah)
+- redundant candidate recommendations
+
+### 8.3 Model Simplification (A/B/C)
+
+A. Minimal Model (2-3 komponen)
+- Core valuation (dynamic: DCF/PE/Yield)
+- Piotroski quality filter
+- Optional supporting signal
+
+B. Balanced Model (3-4 komponen)
+- DCF + Mean Reversion PE + Piotroski + optional Graham/Dividend
+- Dirancang untuk trade-off terbaik antara alpha vs simplicity
+
+C. Full Model (5 metode)
+- Semua metode aktif sebagai benchmark kompleksitas
+
+### 8.4 Empirical Comparison (OOS)
+
+Backtest comparison A vs B vs C dijalankan dengan:
+- Rolling window 5Y train -> 1Y test
+- Strict out-of-sample
+- Benchmark IHSG
+- Metrics: CAGR, Sharpe, Max Drawdown, Win Rate, Alpha
+
+Output tersedia di endpoint yang sama (`/api/model-optimization`) pada blok `backtestComparison.rows`.
+
+### 8.5 Dynamic Model Selection
+
+Rule-based decision tree:
+- Stable company -> DCF-led
+- Cyclical company -> PE-led
+- Dividend stock -> Yield-led
+- Financial/Banking -> PE + Yield blend
+
+Tujuan: model aktif menyesuaikan karakter bisnis, bukan one-size-fits-all.
+
+### 8.6 Weight Optimization (Anti-Overfit)
+
+Sistem melakukan constrained scenario optimization:
+- baseline
+- value tilt
+- relative tilt
+- income tilt
+- defensive mix
+
+Output:
+- optimal weight set
+- sensitivity table antar skenario
+- stability indicator (std Sharpe antar window)
+
+### 8.7 Final Guiding Principle
+
+Jika model full tidak memberi uplift alpha/Sharpe yang material, default operasional sebaiknya di Balanced Model.
+
+Prinsip implementasi:
+- Prioritaskan robustness > complexity
+- Prioritaskan interpretability > over-tuned precision
+- Pertahankan quality filter (Piotroski) sebagai risk gate lintas model
